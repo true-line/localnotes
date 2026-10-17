@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,7 +18,6 @@ function readContextFile(filename) {
 }
 
 const agents = readContextFile('AGENTS.md');
-const claude = readContextFile('CLAUDE.md');
 
 const START = '<!-- governed:shared-agent-discovery:start -->';
 const END = '<!-- governed:shared-agent-discovery:end -->';
@@ -32,13 +31,6 @@ const REQUIRED_POINTERS = [
 // shape rather than one sha so a routine re-pin does not fail this check.
 const PINNED_SKILLS_POINTER =
   /https:\/\/github\.com\/qwts\/agent-sop\/blob\/[0-9a-f]{40}\/skills\/README\.md/g;
-const EXPECTED_CLAUDE = `# CLAUDE.md
-
-Start with [AGENTS.md](AGENTS.md), the canonical repository context.
-
-This adapter adds no Claude-specific rules.
-`;
-
 function occurrences(source, value) {
   return source.split(value).length - 1;
 }
@@ -62,8 +54,8 @@ for (const pointer of REQUIRED_POINTERS) {
 if ((discovery.match(PINNED_SKILLS_POINTER) ?? []).length !== 1) {
   errors.push('the marked discovery block must contain exactly one commit-pinned link to skills/README.md');
 }
-if (claude !== EXPECTED_CLAUDE) {
-  errors.push('CLAUDE.md must remain the exact thin adapter onto AGENTS.md');
+if (existsSync(join(ROOT, 'CLAUDE.md'))) {
+  errors.push('CLAUDE.md must not exist: AGENTS.md is the only agent context (harness adapters removed)');
 }
 
 if (errors.length > 0) {
