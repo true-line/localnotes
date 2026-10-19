@@ -16,7 +16,7 @@
     "icons": "node scripts/generate-icons.js"
   },
   "dependencies": {
-    "katex": "^0.16.30",
+    "katex": "^0.18.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
