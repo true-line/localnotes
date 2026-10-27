@@ -16,7 +16,7 @@
     "icons": "node scripts/generate-icons.js"
   },
   "dependencies": {
-    "katex": "^0.18.2",
+    "katex": "^0.18.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
@@ -32,7 +32,7 @@
     "@vitejs/plugin-react": "^6.0.4",
     "jsdom": "^25.0.1",
     "typescript": "^5.6.3",
-    "vite": "^8.1.5",
+    "vite": "^8.3.5",
     "vitest": "^4.1.11"
   }
 }
