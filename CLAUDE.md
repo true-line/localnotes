@@ -63,5 +63,11 @@ interface Note {
 - **Integration test**: create → edit → delete lifecycle
 - **Accessibility**: keyboard navigation, label coverage, contrast
 
-## Deferred (Out of Scope for MVP)
-Search, tags/folders, export/import, Markdown editing, auth, cloud sync, AI features, mobile layout, attachments.
+## Direction & Out of Scope
+
+The project is evolving from the MVP into a **secure, extensible, agentic** notes tool for
+engineers and scholars. Before planning features, read `docs/roadmap.md` (phased plan M0–M6)
+and `docs/threat-model.md` (security invariants — rendered content must not execute, agents
+propose and humans apply, no egress without explicit configuration).
+
+Still out of scope: cloud sync, accounts/backend, mobile layout.
