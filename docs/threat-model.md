@@ -50,11 +50,15 @@ which invariants they touch.
 
 ## Model provenance
 
-The embeddings model (all-MiniLM-L6-v2, q8) and ONNX Runtime wasm are resolved locally
-(copied into `public/ort/` at dev/build time from `node_modules`). If the neural pipeline
-is unavailable, embeddings fall back to a deterministic local estimator — the app never
-downloads a model as a silent side effect. Any future model fetch must be explicit,
-documented here, and ideally bundled.
+ONNX Runtime wasm is resolved locally (copied into `public/ort/` at dev/build time from
+`node_modules`). The embedding model **weights** (all-MiniLM-L6-v2, q8, ~23 MB) are
+currently fetched from the Hugging Face hub on the first indexing run and then cached by
+the browser — this is the only network fetch the app performs, and note content is never
+transmitted with it. Until the weights are bundled into the extension (tracked as an M0
+follow-up), treat this single first-run fetch as declared, deliberate egress: it can be
+avoided entirely by staying offline, in which case embeddings fall back to the
+deterministic local estimator. Any future model fetch must be explicit and documented
+here.
 
 ## Non-goals
 

@@ -39,6 +39,19 @@ export function sanitizeMarkdownUrl(url: string): string {
   return looksRelative || SAFE_PROTOCOL_RE.test(schemePart) ? url : '';
 }
 
+/**
+ * Decodes a `wikilink:` href's target. Malformed percent-escapes (e.g. `%FF`
+ * in pasted content) must render as inert text instead of throwing during
+ * render — there is no error boundary above this component.
+ */
+function decodeWikiLinkTarget(href: string): string | null {
+  try {
+    return decodeURIComponent(href.slice('wikilink:'.length));
+  } catch {
+    return null;
+  }
+}
+
 function preprocessWikiLinksAndTags(markdown: string): string {
   // Split by fenced code blocks and inline code so we never transform inside code
   const parts = markdown.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
@@ -54,8 +67,11 @@ function preprocessWikiLinksAndTags(markdown: string): string {
             return `[${display}](wikilink:${encodeURIComponent(cleanTarget)})`;
           }
         )
+        // The (?<!\]) lookbehind keeps Markdown link/image destinations
+        // (](#fragment)) out of tag matching — only real prose tags like
+        // "(#tag)" or "#tag" after whitespace are converted.
         .replace(
-          /(^|[\s(])#([a-zA-Z][a-zA-Z0-9_-]*(?:\/[a-zA-Z0-9_-]+)*)/g,
+          /(^|(?<!\])\(|\s)#([a-zA-Z][a-zA-Z0-9_-]*(?:\/[a-zA-Z0-9_-]+)*)/g,
           (_match, prefix: string, tag: string) =>
             `${prefix}[#${tag}](tag:${tag.toLowerCase()})`
         );
@@ -82,7 +98,12 @@ export function MarkdownRenderer({
         components={{
           a: ({ href, children, ...rest }) => {
             if (href?.startsWith('wikilink:')) {
-              const target = decodeURIComponent(href.slice('wikilink:'.length));
+              const target = decodeWikiLinkTarget(href);
+              if (target === null) {
+                return (
+                  <span className="markdown-renderer__dead-link">{children}</span>
+                );
+              }
               return (
                 <button
                   type="button"
@@ -113,8 +134,16 @@ export function MarkdownRenderer({
                 <span className="markdown-renderer__dead-link">{children}</span>
               );
             }
+            if (/^https?:/i.test(href)) {
+              return (
+                <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>
+                  {children}
+                </a>
+              );
+            }
+            // mailto:, tel:, fragments, and relative paths stay in-context
             return (
-              <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>
+              <a href={href} {...rest}>
                 {children}
               </a>
             );

@@ -75,4 +75,37 @@ describe('MarkdownRenderer link rendering', () => {
     const button = screen.getByRole('button', { name: '#security' });
     expect(button).toHaveClass('markdown-renderer__tag');
   });
+
+  it('does not corrupt fragment link destinations while matching tags', () => {
+    render(
+      <MarkdownRenderer content={'[Jump](#section) and a real #tag here'} />
+    );
+    const link = screen.getByRole('link', { name: 'Jump' });
+    expect(link).toHaveAttribute('href', '#section');
+    expect(screen.getByRole('button', { name: '#tag' })).toBeDefined();
+  });
+
+  it('renders malformed wikilink percent-escapes as inert text', () => {
+    render(<MarkdownRenderer content={'[broken](wikilink:%FF)'} />);
+    expect(screen.getByText('broken').tagName).toBe('SPAN');
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('opens only http(s) links in a new context', () => {
+    render(
+      <MarkdownRenderer
+        content={'[web](https://e.com) [mail](mailto:a@b.c) [jump](#s)'}
+      />
+    );
+    expect(screen.getByRole('link', { name: 'web' })).toHaveAttribute(
+      'target',
+      '_blank'
+    );
+    expect(screen.getByRole('link', { name: 'mail' })).not.toHaveAttribute(
+      'target'
+    );
+    expect(screen.getByRole('link', { name: 'jump' })).not.toHaveAttribute(
+      'target'
+    );
+  });
 });
