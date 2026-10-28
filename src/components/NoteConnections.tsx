@@ -63,6 +63,7 @@ export function NoteConnections({
         <div className="note-connections__title-row">
           <span className="note-connections__title">Knowledge Connections</span>
           <span
+            role="status"
             className={`note-connections__status note-connections__status--${embeddingStatus}`}
           >
             {STATUS_LABELS[embeddingStatus]}

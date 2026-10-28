@@ -19,6 +19,37 @@
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
+
+  color-scheme: light;
+}
+
+/* Applied via data-theme on <html>; 'system' resolves in useTheme. */
+[data-theme='dark'] {
+  --color-bg: #1c1917;
+  --color-surface: #292524;
+  --color-surface-hover: #3b3733;
+  --color-accent: #f59e0b;
+  --color-accent-dark: #d97706;
+  --color-text: #fafaf9;
+  --color-muted: #a8a29e;
+  --color-border: #44403c;
+  --color-danger: #f87171;
+  --color-danger-dark: #ef4444;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 *,

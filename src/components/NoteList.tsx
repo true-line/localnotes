@@ -12,6 +12,7 @@ interface Props {
   onDelete: (id: string) => void;
   onNewNote: () => void;
   onToggleGraph?: () => void;
+  onOpenPalette?: () => void;
   onExport?: () => void;
   onImportFile?: (file: File) => void;
 }
@@ -25,6 +26,7 @@ export function NoteList({
   onDelete,
   onNewNote,
   onToggleGraph,
+  onOpenPalette,
   onExport,
   onImportFile,
 }: Props) {
@@ -34,6 +36,17 @@ export function NoteList({
       <div className="note-list__header">
         <h1 className="note-list__app-name">localnotes</h1>
         <div className="note-list__actions">
+          {onOpenPalette && (
+            <button
+              type="button"
+              className="note-list__graph-btn"
+              onClick={onOpenPalette}
+              aria-label="Search (Cmd+K)"
+              title="Search (Cmd+K)"
+            >
+              ⌘K
+            </button>
+          )}
           {onToggleGraph && (
             <button
               type="button"

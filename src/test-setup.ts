@@ -47,3 +47,17 @@ if (typeof File !== 'undefined' && typeof File.prototype.text !== 'function') {
     },
   });
 }
+
+// jsdom has no matchMedia; the theme hook needs prefers-color-scheme
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
