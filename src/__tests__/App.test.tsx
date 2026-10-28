@@ -124,6 +124,7 @@ describe('App integration', () => {
   });
 
   it('imports notes from a JSON archive', async () => {
+    const user = userEvent.setup();
     render(<App />);
     await screen.findByText(/no note selected/i);
 
@@ -144,7 +145,9 @@ describe('App integration', () => {
     const file = new File([JSON.stringify(archive)], 'vault.json', {
       type: 'application/json',
     });
-    const input = screen.getByLabelText('Import');
+    // The visible button drives the hidden file input programmatically
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+    const input = screen.getByTestId('import-file-input');
     fireEvent.change(input, { target: { files: [file] } });
 
     expect(await screen.findByText('Imported 1 note')).toBeInTheDocument();

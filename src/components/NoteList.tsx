@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import type { Note } from '../types';
 import { NoteListItem } from './NoteListItem';
 import '../styles/NoteList.css';
@@ -27,6 +28,7 @@ export function NoteList({
   onExport,
   onImportFile,
 }: Props) {
+  const importInputRef = useRef<HTMLInputElement>(null);
   return (
     <aside className="note-list">
       <div className="note-list__header">
@@ -84,19 +86,32 @@ export function NoteList({
             </button>
           )}
           {onImportFile && (
-            <label className="note-list__data-btn" title="Import notes from a JSON archive">
-              Import
+            <>
+              <button
+                type="button"
+                className="note-list__data-btn"
+                onClick={() => importInputRef.current?.click()}
+                title="Import notes from a JSON archive"
+              >
+                Import
+              </button>
+              {/* Programmatically driven by the button; visually hidden but
+                  not display:none so the click() path stays valid */}
               <input
+                ref={importInputRef}
                 type="file"
                 accept="application/json,.json"
                 className="note-list__import-input"
+                data-testid="import-file-input"
+                aria-hidden="true"
+                tabIndex={-1}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) onImportFile(file);
                   e.target.value = '';
                 }}
               />
-            </label>
+            </>
           )}
         </div>
       )}

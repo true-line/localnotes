@@ -148,6 +148,20 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 /**
+ * Resolves only when the transaction has durably committed — request success
+ * events fire before commit, and commit can still fail (e.g. quota).
+ */
+function transactionToPromise(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error('indexedDB transaction aborted'));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error('indexedDB transaction failed'));
+  });
+}
+
+/**
  * Serializes all write operations so fire-and-forget callers can still be
  * awaited via flushWrites() and never interleave transactions.
  */
@@ -185,21 +199,30 @@ async function openRepository(): Promise<NotesRepository> {
 
   const metaPut = (key: string, value: unknown): Promise<void> =>
     queue.enqueue(() => {
-      const store = tx(['meta'], 'readwrite').objectStore('meta');
-      return requestToPromise(store.put({ key, value })).then(() => undefined);
+      const transaction = tx(['meta'], 'readwrite');
+      const store = transaction.objectStore('meta');
+      return requestToPromise(store.put({ key, value })).then(() =>
+        transactionToPromise(transaction)
+      );
     });
 
   /**
    * One-time import of the legacy localStorage vault. Corrupt legacy data
-   * recovers to empty (never blocks startup); keys are removed afterwards so
-   * a stale vault can never resurrect. Runs before the repository resolves.
+   * recovers to empty (never blocks startup). The notes transaction is
+   * awaited to durable commit BEFORE the legacy keys are removed — clearing
+   * the only other copy on an uncommitted write would risk permanent loss.
+   * Keys are removed afterwards so a stale vault can never resurrect.
    */
   const migrateLegacyStorage = async (): Promise<void> => {
     if ((await metaGet(LEGACY_MIGRATION_KEY)) === true) return;
     const legacy = loadLegacyNotes();
     if (legacy.length > 0) {
-      const store = tx(['notes'], 'readwrite').objectStore('notes');
-      await Promise.all(legacy.map((note) => requestToPromise(store.put(note))));
+      const migrationTx = db.transaction(['notes'], 'readwrite');
+      const store = migrationTx.objectStore('notes');
+      await Promise.all(
+        legacy.map((note) => requestToPromise(store.put(note)))
+      );
+      await transactionToPromise(migrationTx);
     }
     try {
       localStorage.removeItem(LEGACY_NOTES_KEY);
@@ -213,18 +236,22 @@ async function openRepository(): Promise<NotesRepository> {
   await migrateLegacyStorage();
 
   const putNotesRaw = (notes: Note[]): Promise<void> => {
-    const store = tx(['notes'], 'readwrite').objectStore('notes');
+    const transaction = tx(['notes'], 'readwrite');
+    const store = transaction.objectStore('notes');
     return Promise.all(
       notes.map((note) => requestToPromise(store.put(note)))
-    ).then(() => undefined);
+    ).then(() => transactionToPromise(transaction));
   };
 
   const putNotes = (notes: Note[]): Promise<void> =>
     queue.enqueue(() => putNotesRaw(notes));
 
   const deleteNoteRaw = (id: string): Promise<void> => {
-    const store = tx(['notes'], 'readwrite').objectStore('notes');
-    return requestToPromise(store.delete(id)).then(() => undefined);
+    const transaction = tx(['notes'], 'readwrite');
+    const store = transaction.objectStore('notes');
+    return requestToPromise(store.delete(id)).then(() =>
+      transactionToPromise(transaction)
+    );
   };
 
   const getRevisions = async (noteId: string): Promise<NoteRevision[]> => {
@@ -238,20 +265,24 @@ async function openRepository(): Promise<NotesRepository> {
   };
 
   const snapshotRevisionRaw = async (note: Note): Promise<void> => {
-    const revisions = tx(['revisions'], 'readwrite').objectStore('revisions');
+    const putTx = tx(['revisions'], 'readwrite');
+    const revisions = putTx.objectStore('revisions');
     await requestToPromise(
       revisions.put({ noteId: note.id, snapshot: note, at: Date.now() })
     );
+    await transactionToPromise(putTx);
     const all = await getRevisions(note.id);
     const stale = all.slice(REVISION_CAP_PER_NOTE);
     if (stale.length === 0) return;
-    const store = tx(['revisions'], 'readwrite').objectStore('revisions');
+    const deleteTx = tx(['revisions'], 'readwrite');
+    const store = deleteTx.objectStore('revisions');
     await Promise.all(
       stale.map((rev) => {
         if (typeof rev.id !== 'number') return Promise.resolve();
         return requestToPromise(store.delete(rev.id));
       })
     );
+    await transactionToPromise(deleteTx);
   };
 
   // Reads are serialized with writes inside the queue so compound
@@ -317,7 +348,8 @@ async function openRepository(): Promise<NotesRepository> {
     replaceRevisions(noteId: string, revisions: NoteRevision[]) {
       const valid = revisions.filter(isNoteRevision);
       return queue.enqueue(() => {
-        const store = tx(['revisions'], 'readwrite').objectStore('revisions');
+        const transaction = tx(['revisions'], 'readwrite');
+        const store = transaction.objectStore('revisions');
         const index = store.index('byNote');
         return (async () => {
           const existing = (await requestToPromise(
@@ -336,13 +368,15 @@ async function openRepository(): Promise<NotesRepository> {
               )
             )
           );
+          await transactionToPromise(transaction);
         })();
       });
     },
 
     replaceEmbeddings(cache: EmbeddingCacheStore) {
       return queue.enqueue(() => {
-        const store = tx(['embeddings'], 'readwrite').objectStore('embeddings');
+        const transaction = tx(['embeddings'], 'readwrite');
+        const store = transaction.objectStore('embeddings');
         return (async () => {
           await requestToPromise(store.clear());
           await Promise.all(
@@ -356,6 +390,7 @@ async function openRepository(): Promise<NotesRepository> {
               )
             )
           );
+          await transactionToPromise(transaction);
         })();
       });
     },
@@ -381,8 +416,11 @@ async function openRepository(): Promise<NotesRepository> {
 
     clearEmbeddings() {
       return queue.enqueue(() => {
-        const store = tx(['embeddings'], 'readwrite').objectStore('embeddings');
-        return requestToPromise(store.clear()).then(() => undefined);
+        const transaction = tx(['embeddings'], 'readwrite');
+        const store = transaction.objectStore('embeddings');
+        return requestToPromise(store.clear()).then(() =>
+          transactionToPromise(transaction)
+        );
       });
     },
 
