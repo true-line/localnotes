@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useNotes } from '../hooks/useNotes';
-import { getRepository } from '../storage';
+import { getRepository, resetRepositoryForTests } from '../storage';
 import type { Note } from '../types';
 
 const makeNote = (overrides: Partial<Note> = {}): Note => ({
@@ -179,5 +179,38 @@ describe('useNotes', () => {
     });
     await repo.flushWrites();
     expect(await repo.getAllNotes()).toHaveLength(0);
+  });
+
+  it('refreshNotes does not overwrite mutations made during the read', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote({ id: 'seed-1', title: 'Seeded note' }));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const refresh = result.current.refreshNotes();
+    act(() => {
+      result.current.createNote('Created during refresh');
+    });
+    await refresh;
+
+    // The created note must survive: if the guard failed, the stale read
+    // would have overwritten state back to just the seeded note.
+    const titles = result.current.notes.map((n) => n.title);
+    expect(titles).toContain('Created during refresh');
+    expect(titles).toContain('Seeded note');
+  });
+
+  it('exposes a load error instead of loading forever when storage fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    (globalThis as { indexedDB?: unknown }).indexedDB = {
+      open: () => {
+        throw new Error('storage unavailable');
+      },
+    };
+    resetRepositoryForTests();
+
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.loadError).toBeTruthy());
+    expect(result.current.isLoading).toBe(false);
   });
 });

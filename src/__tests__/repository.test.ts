@@ -5,6 +5,7 @@ import {
   exportVault,
   importVault,
   resetRepositoryForTests,
+  createWriteQueue,
   REVISION_CAP_PER_NOTE,
   type NotesRepository,
 } from '../storage';
@@ -131,6 +132,30 @@ describe('NotesRepository (IndexedDB)', () => {
       await repo.clearEmbeddings();
       expect(await repo.getAllEmbeddings()).toEqual({});
     });
+  });
+});
+
+describe('write queue', () => {
+  it('flush resolves when all writes succeed', async () => {
+    const queue = createWriteQueue();
+    const ran: number[] = [];
+    await Promise.all([
+      queue.enqueue(async () => void ran.push(1)),
+      queue.enqueue(async () => void ran.push(2)),
+    ]);
+    await queue.flush();
+    expect(ran.sort()).toEqual([1, 2]);
+  });
+
+  it('flush rejects if any queued write failed, and exports cannot mask it', async () => {
+    const queue = createWriteQueue();
+    void queue.enqueue(async () => {
+      throw new Error('commit aborted');
+    });
+    await queue.enqueue(async () => 'later write');
+    await expect(queue.flush()).rejects.toThrow('commit aborted');
+    // The failure is consumed by the flush that reported it
+    await queue.flush();
   });
 });
 

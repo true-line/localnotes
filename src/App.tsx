@@ -17,6 +17,7 @@ export function App() {
     selectedId,
     selectedNote,
     isLoading,
+    loadError,
     createNote,
     updateNote,
     deleteNote,
@@ -66,8 +67,12 @@ export function App() {
         await refreshNotes();
         const count = result.imported;
         setDataStatus(`Imported ${count} note${count === 1 ? '' : 's'}`);
-      } catch {
-        setDataStatus('Import failed: not a LocalNotes archive');
+      } catch (err) {
+        setDataStatus(
+          err instanceof Error && err.message
+            ? `Import failed: ${err.message}`
+            : 'Import failed'
+        );
       }
     },
     [refreshNotes]
@@ -144,6 +149,21 @@ export function App() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [isLoading, handleNewNote, handleToggleGraph, pendingDeleteId]);
+
+  if (loadError) {
+    // Storage is unavailable or migration failed; the vault is untouched.
+    // Reload retries — migration keeps the legacy copy on failure.
+    return (
+      <div className="app app--loading">
+        <div className="app__load-error" role="alert">
+          <p>LocalNotes couldn’t open its notes database. Your notes have not been modified.</p>
+          <button type="button" onClick={() => window.location.reload()}>
+            Reload LocalNotes
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

@@ -163,13 +163,18 @@ function transactionToPromise(transaction: IDBTransaction): Promise<void> {
 
 /**
  * Serializes all write operations so fire-and-forget callers can still be
- * awaited via flushWrites() and never interleave transactions.
+ * awaited via flushWrites() and never interleave transactions. Failures are
+ * recorded (not swallowed): flush() drains the queue but rejects if any
+ * write since the last flush failed, so an export can never present an
+ * incomplete vault as a successful backup.
  */
-function createWriteQueue() {
+export function createWriteQueue() {
   let chain: Promise<unknown> = Promise.resolve();
+  const failures: unknown[] = [];
   return {
     enqueue<T>(op: () => Promise<T>): Promise<T> {
       const next = chain.then(op, op);
+      next.catch((err) => failures.push(err));
       chain = next.then(
         () => undefined,
         () => undefined
@@ -177,7 +182,11 @@ function createWriteQueue() {
       return next;
     },
     flush(): Promise<void> {
-      return chain.then(() => undefined);
+      return chain.then(() => {
+        if (failures.length > 0) {
+          throw failures.shift();
+        }
+      });
     },
   };
 }
@@ -456,22 +465,23 @@ export async function exportVault(): Promise<ExportArchive> {
 
 /**
  * Imports a JSON archive, merging by note id (upsert) so an import can never
- * silently destroy existing notes. Malformed archives throw; invalid entries
- * are skipped and counted.
+ * silently destroy existing notes. Malformed archives throw with a plain
+ * message (the caller prefixes context); invalid entries are skipped and
+ * counted.
  */
 export async function importVault(text: string): Promise<ImportResult> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error('import failed: file is not valid JSON');
+    throw new Error('file is not valid JSON');
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('import failed: not a LocalNotes archive');
+    throw new Error('not a LocalNotes archive');
   }
   const archive = parsed as Record<string, unknown>;
   if (archive.app !== 'localnotes' || !Array.isArray(archive.notes)) {
-    throw new Error('import failed: not a LocalNotes archive');
+    throw new Error('not a LocalNotes archive');
   }
 
   const candidates = archive.notes as unknown[];

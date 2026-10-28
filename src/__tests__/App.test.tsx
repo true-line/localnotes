@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../App';
-import { getRepository } from '../storage';
+import { getRepository, resetRepositoryForTests } from '../storage';
 
 beforeEach(() => {
   localStorage.clear();
@@ -154,6 +154,21 @@ describe('App integration', () => {
     await waitFor(() =>
       expect(screen.getByText('Imported note')).toBeInTheDocument()
     );
+  });
+
+  it('shows a recoverable error screen when the database cannot open', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    (globalThis as { indexedDB?: unknown }).indexedDB = {
+      open: () => {
+        throw new Error('storage unavailable');
+      },
+    };
+    resetRepositoryForTests();
+
+    render(<App />);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/couldn’t open its notes database/i);
+    expect(screen.getByRole('button', { name: 'Reload LocalNotes' })).toBeInTheDocument();
   });
 
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
