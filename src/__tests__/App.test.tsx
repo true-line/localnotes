@@ -1,23 +1,28 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../App';
+import { getRepository } from '../storage';
 
 beforeEach(() => {
   localStorage.clear();
+  Object.assign(globalThis.URL, {
+    createObjectURL: vi.fn(() => 'blob:mock'),
+    revokeObjectURL: vi.fn(),
+  });
 });
 
 describe('App integration', () => {
-  it('shows empty state on first load', () => {
+  it('shows empty state on first load', async () => {
     render(<App />);
-    expect(screen.getByText(/no note selected/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no note selected/i)).toBeInTheDocument();
   });
 
   it('creates a note when New note button is clicked', async () => {
     const user = userEvent.setup();
     render(<App />);
     // Use the EmptyState "New note" button (exact text, not the sidebar "+" button)
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     expect(screen.getByLabelText(/note title/i)).toBeInTheDocument();
     expect(screen.queryByText(/no note selected/i)).not.toBeInTheDocument();
   });
@@ -25,6 +30,7 @@ describe('App integration', () => {
   it('creates a note with Cmd+N shortcut', async () => {
     const user = userEvent.setup();
     render(<App />);
+    await screen.findByText(/no note selected/i);
     await user.keyboard('{Meta>}n{/Meta}');
     expect(screen.getByLabelText(/note title/i)).toBeInTheDocument();
   });
@@ -32,7 +38,7 @@ describe('App integration', () => {
   it('auto-saves title as user types', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     const titleInput = screen.getByLabelText(/note title/i);
     await user.type(titleInput, 'My First Note');
     expect(titleInput).toHaveValue('My First Note');
@@ -43,7 +49,7 @@ describe('App integration', () => {
   it('auto-saves content as user types', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     const contentArea = screen.getByLabelText(/note content/i);
     await user.type(contentArea, 'Hello world');
     expect(contentArea).toHaveValue('Hello world');
@@ -52,7 +58,7 @@ describe('App integration', () => {
   it('shows delete confirmation dialog when delete is triggered', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     await user.click(screen.getByRole('button', { name: 'Delete note' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/delete note\?/i)).toBeInTheDocument();
@@ -61,7 +67,7 @@ describe('App integration', () => {
   it('cancels delete when Cancel is clicked', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     await user.click(screen.getByRole('button', { name: 'Delete note' }));
     await user.click(screen.getByRole('button', { name: /cancel/i }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -71,7 +77,7 @@ describe('App integration', () => {
   it('deletes note after confirmation and shows empty state', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     await user.click(screen.getByRole('button', { name: 'Delete note' }));
     await user.click(screen.getByRole('button', { name: /^delete$/i }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -81,23 +87,70 @@ describe('App integration', () => {
   it('persists notes across re-mounts (simulates page refresh)', async () => {
     const user = userEvent.setup();
     const { unmount } = render(<App />);
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     const titleInput = screen.getByLabelText(/note title/i);
     await user.type(titleInput, 'Persistent note');
+
+    // Wait for the fire-and-forget writes to land before "refreshing"
+    const repo = await getRepository();
+    await repo.flushWrites();
     unmount();
 
     render(<App />);
-    expect(screen.getByText('Persistent note')).toBeInTheDocument();
+    expect(await screen.findByText('Persistent note')).toBeInTheDocument();
   });
 
   it('closes dialog with Escape key', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     await user.click(screen.getByRole('button', { name: 'Delete note' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('exports the vault as JSON and reports the count', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Exported note');
+
+    await user.click(screen.getByRole('button', { name: 'Export' }));
+    expect(await screen.findByText('Exported 1 note')).toBeInTheDocument();
+    expect(globalThis.URL.createObjectURL).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'application/json' })
+    );
+  });
+
+  it('imports notes from a JSON archive', async () => {
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    const archive = {
+      app: 'localnotes',
+      version: 1,
+      exportedAt: 1,
+      notes: [
+        {
+          id: 'imported-1',
+          title: 'Imported note',
+          content: 'From archive',
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    };
+    const file = new File([JSON.stringify(archive)], 'vault.json', {
+      type: 'application/json',
+    });
+    const input = screen.getByLabelText('Import');
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText('Imported 1 note')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText('Imported note')).toBeInTheDocument()
+    );
   });
 
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
@@ -106,7 +159,7 @@ describe('App integration', () => {
 
     // Create first note: "Relativity" with #physics and [[Spacetime]]
     // Note: in userEvent v14, '[' is escaped as '[['
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     await user.type(screen.getByLabelText(/note title/i), 'Relativity');
     await user.type(
       screen.getByLabelText(/note content/i),
@@ -140,7 +193,7 @@ describe('App integration', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
     await user.type(screen.getByLabelText(/note title/i), 'Category Theory');
     await user.type(
       screen.getByLabelText(/note content/i),
@@ -177,4 +230,3 @@ describe('App integration', () => {
     expect(screen.getByLabelText(/note title/i)).toHaveValue('Functors');
   });
 });
-

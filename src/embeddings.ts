@@ -279,34 +279,6 @@ export function getNoteEmbedText(note: Pick<Note, 'title' | 'content'>): string 
   return title && content ? `${title}\n${content}` : title || content;
 }
 
-/**
- * Loads cached note embeddings from localStorage with defensive parsing.
- */
-export function loadEmbeddingCache(): EmbeddingCacheStore {
-  try {
-    const raw = localStorage.getItem(EMBEDDING_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return {};
-    }
-    return parsed as EmbeddingCacheStore;
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Saves cached note embeddings to localStorage.
- */
-export function saveEmbeddingCache(cache: EmbeddingCacheStore): void {
-  try {
-    localStorage.setItem(EMBEDDING_STORAGE_KEY, JSON.stringify(cache));
-  } catch {
-    // Ignore storage quota errors
-  }
-}
-
 type FeatureOutput = { data: Float32Array | number[] };
 type FeaturePipeline = (
   text: string,

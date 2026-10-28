@@ -100,6 +100,47 @@
   padding: 6px 0;
 }
 
+.note-list__footer {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.note-list__data-btn {
+  flex: 1;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.note-list__data-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-dark);
+}
+
+.note-list__import-input {
+  display: none;
+}
+
+.note-list__data-status {
+  padding: 4px 12px 10px;
+  font-size: 12px;
+  color: var(--color-muted);
+  text-align: center;
+  flex-shrink: 0;
+}
+
 /* NoteListItem */
 .note-list-item {
   display: flex;

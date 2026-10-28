@@ -1,59 +1,78 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { Note } from '../types';
-import { loadNotes, saveNotes } from '../storage';
+import { getRepository } from '../storage';
 
 function sortByUpdated(notes: Note[]): Note[] {
   return [...notes].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function useNotes() {
-  const [notes, setNotes] = useState<Note[]>(() => sortByUpdated(loadNotes()));
+  const [notes, setNotes] = useState<Note[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const persist = useCallback((updated: Note[]) => {
-    const sorted = sortByUpdated(updated);
-    setNotes(sorted);
-    saveNotes(sorted);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const repo = await getRepository();
+      const all = await repo.getAllNotes();
+      if (cancelled) return;
+      setNotes(sortByUpdated(all));
+      setIsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const createNote = useCallback(
-    (initialTitle?: string | unknown) => {
-      const now = Date.now();
-      const title = typeof initialTitle === 'string' ? initialTitle : '';
-      const note: Note = {
-        id: crypto.randomUUID(),
-        title,
-        content: '',
-        createdAt: now,
-        updatedAt: now,
-      };
-      const updated = [note, ...notes];
-      persist(updated);
-      setSelectedId(note.id);
-      return note;
-    },
-    [notes, persist]
-  );
+  const refreshNotes = useCallback(async () => {
+    const repo = await getRepository();
+    setNotes(sortByUpdated(await repo.getAllNotes()));
+  }, []);
+
+  const createNote = useCallback((initialTitle?: string | unknown) => {
+    const now = Date.now();
+    const title = typeof initialTitle === 'string' ? initialTitle : '';
+    const note: Note = {
+      id: crypto.randomUUID(),
+      title,
+      content: '',
+      createdAt: now,
+      updatedAt: now,
+    };
+    setNotes((prev) => sortByUpdated([note, ...prev]));
+    setSelectedId(note.id);
+    void getRepository().then((repo) => repo.putNote(note));
+    return note;
+  }, []);
 
   const updateNote = useCallback(
     (id: string, fields: Partial<Pick<Note, 'title' | 'content'>>) => {
-      const updated = notes.map((n) =>
-        n.id === id ? { ...n, ...fields, updatedAt: Date.now() } : n
+      const previous = notes.find((n) => n.id === id);
+      if (!previous) return;
+      const next: Note = { ...previous, ...fields, updatedAt: Date.now() };
+      setNotes(sortByUpdated(notes.map((n) => (n.id === id ? next : n))));
+      void getRepository().then((repo) =>
+        repo.saveNoteWithRevision(previous, next)
       );
-      persist(updated);
     },
-    [notes, persist]
+    [notes]
   );
 
   const deleteNote = useCallback(
     (id: string) => {
+      const previous = notes.find((n) => n.id === id);
       const updated = notes.filter((n) => n.id !== id);
-      persist(updated);
+      setNotes(updated);
       if (selectedId === id) {
         setSelectedId(updated.length > 0 ? updated[0].id : null);
       }
+      void (async () => {
+        const repo = await getRepository();
+        if (previous) await repo.deleteNoteWithRevision(previous);
+      })();
     },
-    [notes, selectedId, persist]
+    [notes, selectedId]
   );
 
   const selectNote = useCallback((id: string) => {
@@ -66,9 +85,11 @@ export function useNotes() {
     notes,
     selectedId,
     selectedNote,
+    isLoading,
     createNote,
     updateNote,
     deleteNote,
     selectNote,
+    refreshNotes,
   };
 }

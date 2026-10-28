@@ -6,20 +6,26 @@ interface Props {
   notes: Note[];
   selectedId: string | null;
   isGraphOpen?: boolean;
+  dataStatus?: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onNewNote: () => void;
   onToggleGraph?: () => void;
+  onExport?: () => void;
+  onImportFile?: (file: File) => void;
 }
 
 export function NoteList({
   notes,
   selectedId,
   isGraphOpen = false,
+  dataStatus,
   onSelect,
   onDelete,
   onNewNote,
   onToggleGraph,
+  onExport,
+  onImportFile,
 }: Props) {
   return (
     <aside className="note-list">
@@ -64,6 +70,40 @@ export function NoteList({
             />
           ))}
         </ul>
+      )}
+      {(onExport || onImportFile) && (
+        <div className="note-list__footer">
+          {onExport && (
+            <button
+              type="button"
+              className="note-list__data-btn"
+              onClick={onExport}
+              title="Export all notes as a JSON archive"
+            >
+              Export
+            </button>
+          )}
+          {onImportFile && (
+            <label className="note-list__data-btn" title="Import notes from a JSON archive">
+              Import
+              <input
+                type="file"
+                accept="application/json,.json"
+                className="note-list__import-input"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onImportFile(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          )}
+        </div>
+      )}
+      {dataStatus && (
+        <p className="note-list__data-status" role="status">
+          {dataStatus}
+        </p>
       )}
     </aside>
   );

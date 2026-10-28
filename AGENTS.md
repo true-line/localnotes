@@ -32,9 +32,11 @@ inherit by default, vary by explicit delta).
   cloud-sync, or note-data network path. Scope and acceptance criteria live in
   [the MVP plan](docs/notes-mvp-plan.md).
 - **Persistence boundary:** all note persistence goes through
-  [`src/storage.ts`](src/storage.ts). Keep its defensive invalid-data fallback,
-  and keep note ordering and selection state in
-  [`useNotes`](src/hooks/useNotes.ts).
+  [`src/storage.ts`](src/storage.ts) — an IndexedDB-backed repository with
+  per-note writes, schema versioning, bounded revisions, and JSON
+  export/import. `localStorage` is read exactly once as a migration source
+  and never written; keep its defensive invalid-data fallback, and keep note
+  ordering and selection state in [`useNotes`](src/hooks/useNotes.ts).
 - **Interface:** the app is a Vite, React, and TypeScript SPA using custom
   components and CSS. Preserve keyboard access and confirmation before note
   deletion; current behavior is exercised under [`src/__tests__/`](src/__tests__/).

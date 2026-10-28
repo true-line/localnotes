@@ -10,3 +10,8 @@
   display: flex;
   flex-direction: column;
 }
+
+.app--loading {
+  grid-template-columns: 280px 1fr;
+  background: var(--color-surface);
+}

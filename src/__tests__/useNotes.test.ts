@@ -1,6 +1,17 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useNotes } from '../hooks/useNotes';
+import { getRepository } from '../storage';
+import type { Note } from '../types';
+
+const makeNote = (overrides: Partial<Note> = {}): Note => ({
+  id: 'seed-1',
+  title: 'Seeded note',
+  content: '',
+  createdAt: 1000,
+  updatedAt: 1000,
+  ...overrides,
+});
 
 beforeEach(() => {
   localStorage.clear();
@@ -126,12 +137,47 @@ describe('useNotes', () => {
     vi.useRealTimers();
   });
 
-  it('persists notes to localStorage on create', () => {
+  it('persists notes to IndexedDB on create', async () => {
     const { result } = renderHook(() => useNotes());
     act(() => {
       result.current.createNote();
     });
-    const stored = JSON.parse(localStorage.getItem('localnotes')!);
+    const repo = await getRepository();
+    await repo.flushWrites();
+    const stored = await repo.getAllNotes();
     expect(stored).toHaveLength(1);
+    expect(stored[0].title).toBe('');
+  });
+
+  it('hydrates notes from IndexedDB on mount', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote({ id: 'seed-1', title: 'Seeded note' }));
+    await repo.putNote(
+      makeNote({ id: 'seed-2', title: 'Newer seeded note', updatedAt: 2000 })
+    );
+
+    const { result } = renderHook(() => useNotes());
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.notes.map((n) => n.title)).toEqual([
+      'Newer seeded note',
+      'Seeded note',
+    ]);
+  });
+
+  it('persists updates and deletes to IndexedDB', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote({ id: 'seed-1' }));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.updateNote('seed-1', { title: 'Updated' });
+    });
+    act(() => {
+      result.current.deleteNote('seed-1');
+    });
+    await repo.flushWrites();
+    expect(await repo.getAllNotes()).toHaveLength(0);
   });
 });
