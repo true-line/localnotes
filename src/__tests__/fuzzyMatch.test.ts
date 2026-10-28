@@ -29,4 +29,13 @@ describe('fuzzyScore', () => {
   it('is case-insensitive and trims the query', () => {
     expect(fuzzyScore('  NOTE ', 'Notes')).toBeGreaterThan(0);
   });
+
+  it('keeps successful matches positive regardless of haystack length', () => {
+    // Regression: the length penalty was unbounded, so a matching title in a
+    // long note scored below zero and vanished from results
+    const long = 'Notes\n' + 'x'.repeat(4000);
+    expect(fuzzyScore('nt', 'Notes')).toBeGreaterThan(0);
+    expect(fuzzyScore('nt', long)).toBeGreaterThan(0);
+    expect(fuzzyScore('nt', 'Notes')).toBeGreaterThan(fuzzyScore('nt', long));
+  });
 });

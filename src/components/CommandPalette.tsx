@@ -102,9 +102,17 @@ export function CommandPalette({
     item.run();
   };
 
+  // Handler lives on the overlay so it fires no matter which element inside
+  // the dialog has focus; Tab is trapped because the palette's only
+  // focusable control is the input.
   const onKeyDown = (e: React.KeyboardEvent) => {
     // IME composition: Enter/arrows confirm candidates, not commands
     if (e.nativeEvent.isComposing) return;
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      inputRef.current?.focus();
+      return;
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActive((a) => Math.min(a + 1, Math.max(items.length - 1, 0)));
@@ -126,6 +134,7 @@ export function CommandPalette({
   return (
     <div
       className="command-palette__overlay"
+      onKeyDown={onKeyDown}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -150,7 +159,6 @@ export function CommandPalette({
           placeholder="Search notes and commands…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={onKeyDown}
         />
         {items.length === 0 ? (
           <p className="command-palette__empty">No matches.</p>

@@ -171,4 +171,18 @@ describe('CommandPalette', () => {
     expect(windowHandler).not.toHaveBeenCalled();
     window.removeEventListener('keydown', windowHandler);
   });
+
+  it('traps Tab so focus cannot reach controls behind the overlay', () => {
+    render(
+      <div>
+        <button type="button">background control</button>
+        <CommandPalette {...baseProps()} />
+      </div>
+    );
+    const input = screen.getByRole('combobox');
+    input.focus();
+    fireEvent.keyDown(input, { key: 'Tab' });
+    fireEvent.keyDown(input, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(input);
+  });
 });
