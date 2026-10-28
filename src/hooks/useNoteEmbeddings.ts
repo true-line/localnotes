@@ -3,28 +3,46 @@ import type { Note, EmbeddingMap, EmbeddingStatus } from '../types';
 import {
   getNoteEmbedText,
   hashText,
-  loadEmbeddingCache,
-  saveEmbeddingCache,
   embedText,
   computeLocalSemanticEmbedding,
-  EMBEDDING_STORAGE_KEY,
   type EmbeddingCacheStore,
 } from '../embeddings';
+import { getRepository } from '../storage';
 
 export function useNoteEmbeddings(notes: Note[], debounceMs = 60) {
-  const [cache, setCache] = useState<EmbeddingCacheStore>(() =>
-    loadEmbeddingCache()
-  );
+  const [cache, setCache] = useState<EmbeddingCacheStore>({});
+  const [hydrated, setHydrated] = useState(false);
   const [status, setStatus] = useState<EmbeddingStatus>('idle');
   const [reindexTrigger, setReindexTrigger] = useState(0);
   const modelLoadedRef = useRef(false);
 
+  // Hydrate the embedding cache from IndexedDB before any indexing runs,
+  // so already-computed vectors are never recomputed or overwritten.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const stored = await getRepository().then((repo) =>
+          repo.getAllEmbeddings()
+        );
+        if (cancelled) return;
+        setCache(stored);
+        setHydrated(true);
+      } catch (err) {
+        // Proceed without the cache: local fallback embeddings still work
+        console.error('localnotes: failed to load embedding cache', err);
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const reindexEmbeddings = useCallback(() => {
-    try {
-      localStorage.removeItem(EMBEDDING_STORAGE_KEY);
-    } catch {
-      // ignore
-    }
+    getRepository()
+      .then((repo) => repo.clearEmbeddings())
+      .catch((err) => console.error('localnotes: failed to clear embeddings', err));
     setCache({});
     setReindexTrigger((t) => t + 1);
   }, []);
@@ -47,6 +65,8 @@ export function useNoteEmbeddings(notes: Note[], debounceMs = 60) {
   }, [notes, cache]);
 
   useEffect(() => {
+    if (!hydrated) return;
+
     const pending: Array<{ id: string; text: string; hash: string }> = [];
     let hasNonEmptyNotes = false;
 
@@ -93,7 +113,11 @@ export function useNoteEmbeddings(notes: Note[], debounceMs = 60) {
 
         if (!cancelled) {
           setCache(updatedCache);
-          saveEmbeddingCache(updatedCache);
+          getRepository()
+            .then((repo) => repo.replaceEmbeddings(updatedCache))
+            .catch((err) =>
+              console.error('localnotes: failed to persist embeddings', err)
+            );
           setStatus('ready');
         }
       } catch {
@@ -107,7 +131,7 @@ export function useNoteEmbeddings(notes: Note[], debounceMs = 60) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [notes, cache, debounceMs, reindexTrigger]);
+  }, [hydrated, notes, cache, debounceMs, reindexTrigger]);
 
   return {
     embeddings,

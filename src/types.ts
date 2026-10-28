@@ -6,6 +6,14 @@ export interface Note {
   updatedAt: number;
 }
 
+export interface NoteRevision {
+  id?: number;
+  noteId: string;
+  /** The full note as it was before the change being recorded */
+  snapshot: Note;
+  at: number;
+}
+
 export type GraphNodeType = 'note' | 'concept' | 'tag';
 
 export interface GraphNode {
