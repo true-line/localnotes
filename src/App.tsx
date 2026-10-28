@@ -126,6 +126,9 @@ export function App() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Shortcuts mutate notes; ignore keys until hydration has populated
+      // state, otherwise a pre-load create is overwritten by getAllNotes.
+      if (isLoading) return;
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
         e.preventDefault();
         handleNewNote();
@@ -140,7 +143,7 @@ export function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleNewNote, handleToggleGraph, pendingDeleteId]);
+  }, [isLoading, handleNewNote, handleToggleGraph, pendingDeleteId]);
 
   if (isLoading) {
     return (
