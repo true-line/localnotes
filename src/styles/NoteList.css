@@ -26,6 +26,41 @@
   color: var(--color-accent);
 }
 
+.note-list__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-list__graph-btn {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.note-list__graph-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-dark);
+}
+
+.note-list__graph-btn--active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.note-list__graph-btn--active:hover {
+  background: var(--color-accent-dark);
+  border-color: var(--color-accent-dark);
+  color: #fff;
+}
+
 .note-list__new-btn {
   width: 28px;
   height: 28px;

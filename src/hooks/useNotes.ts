@@ -16,20 +16,24 @@ export function useNotes() {
     saveNotes(sorted);
   }, []);
 
-  const createNote = useCallback(() => {
-    const now = Date.now();
-    const note: Note = {
-      id: crypto.randomUUID(),
-      title: '',
-      content: '',
-      createdAt: now,
-      updatedAt: now,
-    };
-    const updated = [note, ...notes];
-    persist(updated);
-    setSelectedId(note.id);
-    return note;
-  }, [notes, persist]);
+  const createNote = useCallback(
+    (initialTitle?: string | unknown) => {
+      const now = Date.now();
+      const title = typeof initialTitle === 'string' ? initialTitle : '';
+      const note: Note = {
+        id: crypto.randomUUID(),
+        title,
+        content: '',
+        createdAt: now,
+        updatedAt: now,
+      };
+      const updated = [note, ...notes];
+      persist(updated);
+      setSelectedId(note.id);
+      return note;
+    },
+    [notes, persist]
+  );
 
   const updateNote = useCallback(
     (id: string, fields: Partial<Pick<Note, 'title' | 'content'>>) => {

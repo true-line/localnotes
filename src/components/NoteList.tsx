@@ -5,24 +5,50 @@ import '../styles/NoteList.css';
 interface Props {
   notes: Note[];
   selectedId: string | null;
+  isGraphOpen?: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onNewNote: () => void;
+  onToggleGraph?: () => void;
 }
 
-export function NoteList({ notes, selectedId, onSelect, onDelete, onNewNote }: Props) {
+export function NoteList({
+  notes,
+  selectedId,
+  isGraphOpen = false,
+  onSelect,
+  onDelete,
+  onNewNote,
+  onToggleGraph,
+}: Props) {
   return (
     <aside className="note-list">
       <div className="note-list__header">
         <h1 className="note-list__app-name">localnotes</h1>
-        <button
-          className="note-list__new-btn"
-          onClick={onNewNote}
-          aria-label="New note (Cmd+N)"
-          title="New note (Cmd+N)"
-        >
-          +
-        </button>
+        <div className="note-list__actions">
+          {onToggleGraph && (
+            <button
+              type="button"
+              className={`note-list__graph-btn${
+                isGraphOpen ? ' note-list__graph-btn--active' : ''
+              }`}
+              onClick={onToggleGraph}
+              aria-label="Knowledge graph (Cmd+G)"
+              aria-pressed={isGraphOpen}
+              title="Knowledge graph (Cmd+G)"
+            >
+              Graph
+            </button>
+          )}
+          <button
+            className="note-list__new-btn"
+            onClick={onNewNote}
+            aria-label="New note (Cmd+N)"
+            title="New note (Cmd+N)"
+          >
+            +
+          </button>
+        </div>
       </div>
       {notes.length === 0 ? (
         <p className="note-list__empty">No notes yet.</p>
