@@ -121,4 +121,54 @@ describe('CommandPalette', () => {
     await user.type(screen.getByRole('combobox'), 'zzzznothing');
     expect(screen.getByText(/no matches/i)).toBeInTheDocument();
   });
+
+  it('finds matches deep in long note bodies', async () => {
+    const user = userEvent.setup();
+    const filler = 'x'.repeat(500) + ' the word is quantum somewhere late';
+    render(
+      <CommandPalette
+        {...baseProps({
+          notes: [makeNote({ id: 'long', title: 'Journal', content: filler })],
+        })}
+      />
+    );
+    await user.type(screen.getByRole('combobox'), 'quantum');
+    expect(screen.getByRole('option', { name: /journal/i })).toBeInTheDocument();
+  });
+
+  it('ignores Enter while an IME composition is in progress', async () => {
+    const onClose = vi.fn();
+    const run = vi.fn();
+    render(
+      <CommandPalette
+        {...baseProps({
+          actions: [{ id: 'new', label: 'New note', run }],
+          onClose,
+        })}
+      />
+    );
+    const input = screen.getByRole('combobox');
+    fireEvent(
+      input,
+      new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true })
+    );
+    expect(run).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent(
+      input,
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+    );
+    expect(run).toHaveBeenCalled();
+  });
+
+  it('stops Escape from dismissing layers underneath', () => {
+    const windowHandler = vi.fn();
+    window.addEventListener('keydown', windowHandler);
+    render(<CommandPalette {...baseProps()} />);
+    const input = screen.getByRole('combobox');
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(windowHandler).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', windowHandler);
+  });
 });

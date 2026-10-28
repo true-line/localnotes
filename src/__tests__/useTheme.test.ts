@@ -33,4 +33,15 @@ describe('useTheme', () => {
     await waitFor(() => expect(result.current.setting).toBe('light'));
     expect(document.documentElement.dataset.theme).toBe('light');
   });
+
+  it('exposes the resolved appearance so toggles key off it, not the setting', async () => {
+    // matchMedia stub reports prefers-color-scheme: light (matches: false)
+    const { result } = renderHook(() => useTheme());
+    await waitFor(() => expect(result.current.resolved).toBe('light'));
+
+    act(() => result.current.setTheme('dark'));
+    expect(result.current.setting).toBe('dark');
+    expect(result.current.resolved).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
 });

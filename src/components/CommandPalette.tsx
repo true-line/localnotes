@@ -52,7 +52,9 @@ export function CommandPalette({
       .filter((item) => item.score >= 0);
     const noteItems = notes
       .map((note) => {
-        const haystack = `${note.title}\n${note.content.slice(0, 200)}`;
+        // Score the complete body — truncating here would silently hide
+        // matches that occur later in long-form notes
+        const haystack = `${note.title}\n${note.content}`;
         return {
           key: `note:${note.id}`,
           label: note.title.trim() || 'Untitled',
@@ -74,7 +76,8 @@ export function CommandPalette({
       restoreRef.current = document.activeElement as HTMLElement | null;
       setQuery('');
       setActive(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
+      // The input is mounted by the time effects run — focus synchronously
+      inputRef.current?.focus();
     } else {
       restoreRef.current?.focus?.();
       restoreRef.current = null;
@@ -100,6 +103,8 @@ export function CommandPalette({
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // IME composition: Enter/arrows confirm candidates, not commands
+    if (e.nativeEvent.isComposing) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActive((a) => Math.min(a + 1, Math.max(items.length - 1, 0)));
@@ -112,6 +117,8 @@ export function CommandPalette({
       if (item) runItem(item);
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      // Keep Escape from also dismissing layers underneath (delete dialog)
+      e.stopPropagation();
       onClose();
     }
   };

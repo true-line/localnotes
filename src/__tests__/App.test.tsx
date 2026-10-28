@@ -197,6 +197,21 @@ describe('App integration', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
+  it('keeps the delete dialog open when Escape closes the palette above it', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('button', { name: 'Delete note' }));
+    expect(screen.getByRole('dialog', { name: /delete note\?/i })).toBeInTheDocument();
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    await screen.findByRole('dialog', { name: /command palette/i });
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog', { name: /command palette/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: /delete note\?/i })).toBeInTheDocument();
+  });
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -32,7 +32,7 @@ export function App() {
   } = useNotes();
   const { embeddings, embeddingStatus, reindexEmbeddings } =
     useNoteEmbeddings(notes);
-  const { setting: themeSetting, setTheme } = useTheme();
+  const { resolved: resolvedTheme, setTheme } = useTheme();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [isGraphOpen, setIsGraphOpen] = useState(false);
   const [graphFocusNodeId, setGraphFocusNodeId] = useState<string | null>(null);
@@ -143,8 +143,9 @@ export function App() {
     onToggleGraph: handleToggleGraph,
     onTogglePalette: () => setIsPaletteOpen((prev) => !prev),
     onEscape: () => {
+      // The palette handles its own Escape; don't dismiss stacked layers
+      if (isPaletteOpen) return;
       if (pendingDeleteId) setPendingDeleteId(null);
-      else setIsPaletteOpen(false);
     },
   });
 
@@ -167,8 +168,10 @@ export function App() {
     {
       id: 'toggle-theme',
       label:
-        themeSetting === 'dark' ? 'Switch to light mode' : 'Switch to dark mode',
-      run: () => setTheme(themeSetting === 'dark' ? 'light' : 'dark'),
+        resolvedTheme === 'dark'
+          ? 'Switch to light mode'
+          : 'Switch to dark mode',
+      run: () => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark'),
     },
     {
       id: 'system-theme',
