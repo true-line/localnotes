@@ -86,7 +86,10 @@ jobs:
     name: Build and publish to GitHub Releases
     needs: cut
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30 min: the bounded npm ci envelope (2 attempts x 600s + retry delay
+    # and grace = 1225s) needs 60s headroom on top — same budget as the
+    # governed CI's test job, enforced by the runtime policy checker.
+    timeout-minutes: 30
     env:
       VERSION: ${{ needs.cut.outputs.version }}
     steps:
