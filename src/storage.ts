@@ -31,6 +31,8 @@ export interface NotesRepository {
   replaceEmbeddings(cache: EmbeddingCacheStore): Promise<void>;
   getAllEmbeddings(): Promise<EmbeddingCacheStore>;
   clearEmbeddings(): Promise<void>;
+  getSetting<T>(key: string): Promise<T | undefined>;
+  putSetting(key: string, value: unknown): Promise<void>;
   /** Resolves once every queued write has been persisted. */
   flushWrites(): Promise<void>;
 }
@@ -428,6 +430,24 @@ async function openRepository(): Promise<NotesRepository> {
         const transaction = tx(['embeddings'], 'readwrite');
         const store = transaction.objectStore('embeddings');
         return requestToPromise(store.clear()).then(() =>
+          transactionToPromise(transaction)
+        );
+      });
+    },
+
+    async getSetting<T>(key: string) {
+      const store = tx(['settings'], 'readonly').objectStore('settings');
+      const record = (await requestToPromise(store.get(key))) as
+        | { key: string; value: T }
+        | undefined;
+      return record?.value;
+    },
+
+    putSetting(key: string, value: unknown) {
+      return queue.enqueue(() => {
+        const transaction = tx(['settings'], 'readwrite');
+        const store = transaction.objectStore('settings');
+        return requestToPromise(store.put({ key, value })).then(() =>
           transactionToPromise(transaction)
         );
       });

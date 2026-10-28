@@ -1,12 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNotes } from './hooks/useNotes';
 import { useNoteEmbeddings } from './hooks/useNoteEmbeddings';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useTheme } from './hooks/useTheme';
 import { exportVault, importVault } from './storage';
 import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
 import { EmptyState } from './components/EmptyState';
 import { DeleteDialog } from './components/DeleteDialog';
 import { KnowledgeGraphView } from './components/KnowledgeGraphView';
+import {
+  CommandPalette,
+  type PaletteAction,
+} from './components/CommandPalette';
 import './styles/App.css';
 
 const DATA_STATUS_CLEAR_MS = 5000;
@@ -26,10 +32,12 @@ export function App() {
   } = useNotes();
   const { embeddings, embeddingStatus, reindexEmbeddings } =
     useNoteEmbeddings(notes);
+  const { setting: themeSetting, setTheme } = useTheme();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [isGraphOpen, setIsGraphOpen] = useState(false);
   const [graphFocusNodeId, setGraphFocusNodeId] = useState<string | null>(null);
   const [dataStatus, setDataStatus] = useState<string | null>(null);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
 
   useEffect(() => {
     if (!dataStatus) return;
@@ -129,26 +137,51 @@ export function App() {
     setIsGraphOpen(true);
   }, []);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      // Shortcuts mutate notes; ignore keys until hydration has populated
-      // state, otherwise a pre-load create is overwritten by getAllNotes.
-      if (isLoading) return;
-      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
-        e.preventDefault();
-        handleNewNote();
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'g') {
-        e.preventDefault();
-        handleToggleGraph();
-      }
-      if (e.key === 'Escape' && pendingDeleteId) {
-        setPendingDeleteId(null);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [isLoading, handleNewNote, handleToggleGraph, pendingDeleteId]);
+  useKeyboardShortcuts({
+    enabled: !isLoading && !loadError,
+    onNewNote: handleNewNote,
+    onToggleGraph: handleToggleGraph,
+    onTogglePalette: () => setIsPaletteOpen((prev) => !prev),
+    onEscape: () => {
+      if (pendingDeleteId) setPendingDeleteId(null);
+      else setIsPaletteOpen(false);
+    },
+  });
+
+  const handleSelectNoteFromPalette = useCallback(
+    (id: string) => {
+      selectNote(id);
+      setIsGraphOpen(false);
+    },
+    [selectNote]
+  );
+
+  const paletteActions: PaletteAction[] = [
+    { id: 'new-note', label: 'New note', hint: '⌘N', run: handleNewNote },
+    {
+      id: 'toggle-graph',
+      label: isGraphOpen ? 'Close knowledge graph' : 'Open knowledge graph',
+      hint: '⌘G',
+      run: handleToggleGraph,
+    },
+    {
+      id: 'toggle-theme',
+      label:
+        themeSetting === 'dark' ? 'Switch to light mode' : 'Switch to dark mode',
+      run: () => setTheme(themeSetting === 'dark' ? 'light' : 'dark'),
+    },
+    {
+      id: 'system-theme',
+      label: 'Follow system theme',
+      run: () => setTheme('system'),
+    },
+    { id: 'export', label: 'Export notes (JSON)', run: () => void handleExport() },
+    {
+      id: 'reindex',
+      label: 'Re-index semantic embeddings',
+      run: reindexEmbeddings,
+    },
+  ];
 
   if (loadError) {
     // Storage is unavailable or migration failed; the vault is untouched.
@@ -184,6 +217,7 @@ export function App() {
         onDelete={handleDeleteRequest}
         onNewNote={handleNewNote}
         onToggleGraph={handleToggleGraph}
+        onOpenPalette={() => setIsPaletteOpen(true)}
         onExport={handleExport}
         onImportFile={handleImportFile}
       />
@@ -223,6 +257,13 @@ export function App() {
           onCancel={handleDeleteCancel}
         />
       )}
+      <CommandPalette
+        open={isPaletteOpen}
+        notes={notes}
+        actions={paletteActions}
+        onClose={() => setIsPaletteOpen(false)}
+        onSelectNote={handleSelectNoteFromPalette}
+      />
     </div>
   );
 }

@@ -171,6 +171,32 @@ describe('App integration', () => {
     expect(screen.getByRole('button', { name: 'Reload LocalNotes' })).toBeInTheDocument();
   });
 
+  it('opens the command palette with Cmd+K and jumps to a note', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Findable note');
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    const dialog = await screen.findByRole('dialog', { name: /command palette/i });
+    expect(dialog).toBeInTheDocument();
+
+    await user.type(screen.getByRole('combobox'), 'findable');
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/note title/i)).toHaveValue('Findable note');
+  });
+
+  it('toggles dark mode from the command palette', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    await user.click(await screen.findByRole('option', { name: /switch to dark mode/i }));
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);
