@@ -1,0 +1,52 @@
+# AGENTS.md
+
+Canonical, vendor-neutral agent context for this repository, per
+[ENG-0006](https://github.com/qwts/agent-sop/blob/main/docs/decisions/ENG-0006-agentic-primitives-governance.md).
+Vendor-specific files are thin adapters onto this file; shared and product
+facts belong here once.
+
+<!-- governed:shared-agent-discovery:start -->
+
+## Shared agent conventions and skills
+
+PR-first workflow, validation-before-push, commit and PR hygiene, and the
+untrusted-input threat model are defined once, for every repo, in the
+[org-wide agent conventions](https://github.com/qwts/agent-sop/blob/main/docs/reference/agent-conventions.md).
+Before creating or copying a repo-local skill, consult the reviewed
+[shared agent skills](https://github.com/qwts/agent-sop/blob/74e775ef23d8e7d8f8e693ccc2329f430978c096/skills/README.md)
+index. Reuse only the pinned version supplied by the governed harness; a skill
+genuinely specific to this repository belongs in its local context.
+This repository is governed by
+[agent-sop](https://github.com/qwts/agent-sop) — its
+[shared SOPs](https://github.com/qwts/agent-sop/blob/main/docs/sop/README.md)
+and [engineering decisions](https://github.com/qwts/agent-sop/blob/main/docs/decisions/README.md)
+apply here by default
+([ENG-0008](https://github.com/qwts/agent-sop/blob/main/docs/decisions/ENG-0008-shared-sop-inheritance.md):
+inherit by default, vary by explicit delta).
+<!-- governed:shared-agent-discovery:end -->
+
+## What is specific to this repository
+
+- **Product boundary:** Localnotes is a single-user, browser-only notes app.
+  Note data stays in browser `localStorage`; do not add a backend, account,
+  cloud-sync, or note-data network path. Scope and acceptance criteria live in
+  [the MVP plan](docs/notes-mvp-plan.md).
+- **Persistence boundary:** all note persistence goes through
+  [`src/storage.ts`](src/storage.ts). Keep its defensive invalid-data fallback,
+  and keep note ordering and selection state in
+  [`useNotes`](src/hooks/useNotes.ts).
+- **Interface:** the app is a Vite, React, and TypeScript SPA using custom
+  components and CSS. Preserve keyboard access and confirmation before note
+  deletion; current behavior is exercised under [`src/__tests__/`](src/__tests__/).
+- **Direction:** the project is evolving from the MVP into a secure, extensible,
+  agentic notes tool. Plan features against [`docs/roadmap.md`](docs/roadmap.md)
+  (phased M0–M6) and preserve the security invariants in
+  [`docs/threat-model.md`](docs/threat-model.md) — rendered note content must
+  not execute, agent tool use is tiered (propose diffs, humans apply), and no
+  note data leaves the device without an explicitly configured provider.
+- **Validation:** run `npm run check:agent-context`, `npm run lint`, `npm test`,
+  and `npm run build` before calling a change complete.
+
+Run one Vitest file with `npm run test:file -- <path>`. GitHub CodeQL default
+setup provides the repository's code scanning until an approved migration
+replaces it with advanced setup.

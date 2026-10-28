@@ -4,18 +4,22 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "check:agent-context": "node scripts/check-agent-context.mjs",
     "predev": "node scripts/copy-ort.js",
     "dev": "vite",
     "prebuild": "node scripts/copy-ort.js",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit && eslint .",
-    "test": "vitest run",
+    "test": "npm run test:inner",
+    "test:file": "npm run test:file:inner --",
+    "test:file:inner": "vitest run",
+    "test:inner": "npm run check:agent-context && vitest run src",
     "icons": "node scripts/generate-icons.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
-    "katex": "^0.16.30",
+    "katex": "^0.18.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
@@ -36,7 +40,7 @@
     "jsdom": "^25.0.1",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.72.1",
-    "vite": "^8.1.5",
-    "vitest": "^4.1.10"
+    "vite": "^8.3.5",
+    "vitest": "^4.1.11"
   }
 }
