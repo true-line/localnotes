@@ -38,6 +38,12 @@ inherit by default, vary by explicit delta).
 - **Interface:** the app is a Vite, React, and TypeScript SPA using custom
   components and CSS. Preserve keyboard access and confirmation before note
   deletion; current behavior is exercised under [`src/__tests__/`](src/__tests__/).
+- **Direction:** the project is evolving from the MVP into a secure, extensible,
+  agentic notes tool. Plan features against [`docs/roadmap.md`](docs/roadmap.md)
+  (phased M0–M6) and preserve the security invariants in
+  [`docs/threat-model.md`](docs/threat-model.md) — rendered note content must
+  not execute, agent tool use is tiered (propose diffs, humans apply), and no
+  note data leaves the device without an explicitly configured provider.
 - **Validation:** run `npm run check:agent-context`, `npm run lint`, `npm test`,
   and `npm run build` before calling a change complete.
 

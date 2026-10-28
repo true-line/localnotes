@@ -1,15 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
-import type { Note } from '../types';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import type { Note, EmbeddingMap, EmbeddingStatus } from '../types';
+import { normalizeKey } from '../knowledgeGraph';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { NoteConnections } from './NoteConnections';
 import '../styles/NoteEditor.css';
 
 interface Props {
   note: Note;
+  allNotes?: Note[];
+  embeddings?: EmbeddingMap;
+  embeddingStatus?: EmbeddingStatus;
   onUpdate: (id: string, fields: Partial<Pick<Note, 'title' | 'content'>>) => void;
   onDelete: (id: string) => void;
+  onSelectNote?: (id: string) => void;
+  onCreateConceptNote?: (title: string) => void;
+  onOpenGraphNode?: (nodeId: string) => void;
+  onReindexEmbeddings?: () => void;
 }
 
-export function NoteEditor({ note, onUpdate, onDelete }: Props) {
+export function NoteEditor({
+  note,
+  allNotes = [],
+  embeddings = {},
+  embeddingStatus = 'idle',
+  onUpdate,
+  onDelete,
+  onSelectNote,
+  onCreateConceptNote,
+  onOpenGraphNode,
+  onReindexEmbeddings,
+}: Props) {
   const titleRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
@@ -45,6 +65,26 @@ export function NoteEditor({ note, onUpdate, onDelete }: Props) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  const handleWikiLinkClick = useCallback(
+    (target: string) => {
+      const norm = normalizeKey(target);
+      const existing = allNotes.find((n) => normalizeKey(n.title) === norm);
+      if (existing) {
+        onSelectNote?.(existing.id);
+      } else {
+        onCreateConceptNote?.(target);
+      }
+    },
+    [allNotes, onSelectNote, onCreateConceptNote]
+  );
+
+  const handleTagClick = useCallback(
+    (tag: string) => {
+      onOpenGraphNode?.(`tag:${tag}`);
+    },
+    [onOpenGraphNode]
+  );
 
   return (
     <main className="note-editor">
@@ -92,16 +132,31 @@ export function NoteEditor({ note, onUpdate, onDelete }: Props) {
         <textarea
           ref={contentRef}
           className="note-editor__content"
-          placeholder="Start writing…"
+          placeholder="Start writing… (use [[Note or Concept]] and #tags to connect ideas)"
           aria-label="Note content"
           value={note.content}
           onChange={(e) => onUpdate(note.id, { content: e.target.value })}
         />
       ) : (
         <div className="note-editor__preview">
-          <MarkdownRenderer content={note.content} />
+          <MarkdownRenderer
+            content={note.content}
+            onWikiLinkClick={handleWikiLinkClick}
+            onTagClick={handleTagClick}
+          />
         </div>
       )}
+      <NoteConnections
+        note={note}
+        allNotes={allNotes}
+        embeddings={embeddings}
+        embeddingStatus={embeddingStatus}
+        onSelectNote={(id) => onSelectNote?.(id)}
+        onCreateConceptNote={(title) => onCreateConceptNote?.(title)}
+        onOpenGraphNode={onOpenGraphNode}
+        onReindexEmbeddings={onReindexEmbeddings}
+      />
     </main>
   );
 }
+

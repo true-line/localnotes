@@ -99,4 +99,82 @@ describe('App integration', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    // Create first note: "Relativity" with #physics and [[Spacetime]]
+    // Note: in userEvent v14, '[' is escaped as '[['
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Relativity');
+    await user.type(
+      screen.getByLabelText(/note content/i),
+      'Explores [[[[Spacetime]] in #physics'
+    );
+
+    // Create second note: "Gravity" linking to [[Relativity]] and #physics
+    await user.click(screen.getByRole('button', { name: /new note \(cmd\+n\)/i }));
+    await user.type(screen.getByLabelText(/note title/i), 'Gravity');
+    await user.type(
+      screen.getByLabelText(/note content/i),
+      'Described by [[[[Relativity]] in #physics'
+    );
+
+    // Click outgoing [[Relativity]] pill in Knowledge Connections to navigate back to Relativity
+    await user.click(screen.getByRole('button', { name: '[[Relativity]]' }));
+    expect(screen.getByLabelText(/note title/i)).toHaveValue('Relativity');
+
+    // Verify "Gravity" appears under Backlinks and Related by Topic
+    expect(screen.getByText(/backlinks \(1\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/related by topic \(1\)/i)).toBeInTheDocument();
+
+    // Create note from unresolved concept [[Spacetime]]
+    await user.click(
+      screen.getByRole('button', { name: /create note for spacetime/i })
+    );
+    expect(screen.getByLabelText(/note title/i)).toHaveValue('Spacetime');
+  });
+
+  it('toggles Knowledge Graph View and allows inspecting and creating concept notes', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Category Theory');
+    await user.type(
+      screen.getByLabelText(/note content/i),
+      'Connects [[[[Functors]] and #math'
+    );
+
+    // Open Knowledge Graph View via sidebar button
+    await user.click(
+      screen.getByRole('button', { name: /knowledge graph \(cmd\+g\)/i })
+    );
+    expect(
+      screen.getByRole('main', { name: /knowledge graph view/i })
+    ).toBeInTheDocument();
+
+    // Verify note, topic, and concept nodes are rendered
+    expect(
+      screen.getByRole('button', { name: 'note node: Category Theory' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'tag node: #math' })
+    ).toBeInTheDocument();
+    const conceptNode = screen.getByRole('button', {
+      name: 'concept node: Functors',
+    });
+    expect(conceptNode).toBeInTheDocument();
+
+    // Click concept node to open inspector and create a note from it
+    await user.click(conceptNode);
+    await user.click(
+      screen.getByRole('button', { name: /create note “functors”/i })
+    );
+
+    // Should return to editor with new note titled "Functors"
+    expect(screen.getByLabelText(/note title/i)).toHaveValue('Functors');
+  });
 });
+

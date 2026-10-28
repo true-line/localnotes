@@ -87,7 +87,7 @@
 
 .note-editor__content {
   flex: 1;
-  min-height: calc(100vh - 120px);
+  min-height: 360px;
   border: none;
   outline: none;
   background: transparent;
