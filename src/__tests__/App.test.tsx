@@ -262,6 +262,23 @@ describe('App integration', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  it('does not open the chat beneath an open command palette', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    await screen.findByRole('dialog', { name: /command palette/i });
+
+    await user.keyboard('{Meta>}j{/Meta}');
+    expect(
+      screen.queryByRole('complementary', { name: /agent chat/i })
+    ).not.toBeInTheDocument();
+    // Typing still reaches the palette, not an obscured composer
+    await user.type(screen.getByRole('combobox'), 'still searching');
+    expect(screen.getByRole('combobox')).toHaveValue('still searching');
+  });
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);

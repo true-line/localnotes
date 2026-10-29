@@ -147,7 +147,13 @@ export function App() {
     onNewNote: handleNewNote,
     onToggleGraph: handleToggleGraph,
     onTogglePalette: () => setIsPaletteOpen((prev) => !prev),
-    onToggleChat: () => setIsChatOpen((prev) => !prev),
+    // The palette is the topmost command surface: chat must not open (and
+    // steal focus) beneath it. Palette over an already-open chat is fine —
+    // opening the palette moves focus to the topmost layer.
+    onToggleChat: () => {
+      if (isPaletteOpen) return;
+      setIsChatOpen((prev) => !prev);
+    },
     onEscape: () => {
       // Topmost layer first: palette self-handles Escape, then chat, then
       // the delete dialog.
