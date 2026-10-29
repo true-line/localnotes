@@ -212,6 +212,73 @@ describe('App integration', () => {
     expect(screen.getByRole('dialog', { name: /delete note\?/i })).toBeInTheDocument();
   });
 
+  it('toggles the agent chat drawer with Cmd+J over any view', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    await user.keyboard('{Meta>}j{/Meta}');
+    const drawer = await screen.findByRole('complementary', { name: /agent chat/i });
+    expect(drawer).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Agent' })).toBeInTheDocument();
+
+    await user.keyboard('{Meta>}j{/Meta}');
+    expect(
+      screen.queryByRole('complementary', { name: /agent chat/i })
+    ).not.toBeInTheDocument();
+
+    // Works over the graph view too
+    await user.click(screen.getByRole('button', { name: /knowledge graph \(cmd\+g\)/i }));
+    await user.keyboard('{Meta>}j{/Meta}');
+    expect(await screen.findByRole('complementary', { name: /agent chat/i })).toBeInTheDocument();
+    expect(screen.getByRole('main', { name: /knowledge graph view/i })).toBeInTheDocument();
+  });
+
+  it('sends a message in the agent chat and shows the canned reply', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+    await user.keyboard('{Meta>}j{/Meta}');
+
+    await user.type(screen.getByLabelText(/message the agent/i), 'hello agent');
+    await user.click(screen.getByRole('button', { name: /send message/i }));
+    await waitFor(() =>
+      expect(screen.getAllByText(/offline mock provider/i).length).toBeGreaterThan(0)
+    );
+  }, 10_000);
+
+  it('keeps the delete dialog open when Escape closes the chat above it', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('button', { name: 'Delete note' }));
+    await user.keyboard('{Meta>}j{/Meta}');
+    await screen.findByRole('complementary', { name: /agent chat/i });
+
+    await user.keyboard('{Escape}');
+    expect(
+      screen.queryByRole('complementary', { name: /agent chat/i })
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('does not open the chat beneath an open command palette', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    await user.keyboard('{Meta>}k{/Meta}');
+    await screen.findByRole('dialog', { name: /command palette/i });
+
+    await user.keyboard('{Meta>}j{/Meta}');
+    expect(
+      screen.queryByRole('complementary', { name: /agent chat/i })
+    ).not.toBeInTheDocument();
+    // Typing still reaches the palette, not an obscured composer
+    await user.type(screen.getByRole('combobox'), 'still searching');
+    expect(screen.getByRole('combobox')).toHaveValue('still searching');
+  });
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -14,13 +14,8 @@ export function DeleteDialog({ noteTitle, onConfirm, onCancel }: Props) {
     cancelRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onCancel]);
+  // Escape is handled by App's layered shortcut handler (palette > chat >
+  // dialog), so this dialog deliberately registers no global key listener.
 
   return (
     <div

@@ -3,12 +3,15 @@ import { useNotes } from './hooks/useNotes';
 import { useNoteEmbeddings } from './hooks/useNoteEmbeddings';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
+import { useAgentSession } from './agent/useAgentSession';
+import { normalizeKey } from './knowledgeGraph';
 import { exportVault, importVault } from './storage';
 import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
 import { EmptyState } from './components/EmptyState';
 import { DeleteDialog } from './components/DeleteDialog';
 import { KnowledgeGraphView } from './components/KnowledgeGraphView';
+import { ChatOverlay } from './components/ChatOverlay';
 import {
   CommandPalette,
   type PaletteAction,
@@ -33,11 +36,13 @@ export function App() {
   const { embeddings, embeddingStatus, reindexEmbeddings } =
     useNoteEmbeddings(notes);
   const { resolved: resolvedTheme, setTheme } = useTheme();
+  const session = useAgentSession();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [isGraphOpen, setIsGraphOpen] = useState(false);
   const [graphFocusNodeId, setGraphFocusNodeId] = useState<string | null>(null);
   const [dataStatus, setDataStatus] = useState<string | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
     if (!dataStatus) return;
@@ -142,9 +147,21 @@ export function App() {
     onNewNote: handleNewNote,
     onToggleGraph: handleToggleGraph,
     onTogglePalette: () => setIsPaletteOpen((prev) => !prev),
-    onEscape: () => {
-      // The palette handles its own Escape; don't dismiss stacked layers
+    // The palette is the topmost command surface: chat must not open (and
+    // steal focus) beneath it. Palette over an already-open chat is fine —
+    // opening the palette moves focus to the topmost layer.
+    onToggleChat: () => {
       if (isPaletteOpen) return;
+      setIsChatOpen((prev) => !prev);
+    },
+    onEscape: () => {
+      // Topmost layer first: palette self-handles Escape, then chat, then
+      // the delete dialog.
+      if (isPaletteOpen) return;
+      if (isChatOpen) {
+        setIsChatOpen(false);
+        return;
+      }
       if (pendingDeleteId) setPendingDeleteId(null);
     },
   });
@@ -155,6 +172,21 @@ export function App() {
       setIsGraphOpen(false);
     },
     [selectNote]
+  );
+
+  // Wikilinks inside agent replies navigate exactly like editor wikilinks:
+  // open the note if it exists, otherwise offer a fresh note with that title.
+  const handleChatWikiLinkClick = useCallback(
+    (target: string) => {
+      const norm = normalizeKey(target);
+      const existing = notes.find((n) => normalizeKey(n.title) === norm);
+      if (existing) {
+        handleSelectNote(existing.id);
+      } else {
+        handleCreateConceptNote(target);
+      }
+    },
+    [notes, handleSelectNote, handleCreateConceptNote]
   );
 
   const paletteActions: PaletteAction[] = [
@@ -266,6 +298,12 @@ export function App() {
         actions={paletteActions}
         onClose={() => setIsPaletteOpen(false)}
         onSelectNote={handleSelectNoteFromPalette}
+      />
+      <ChatOverlay
+        open={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        session={session}
+        onWikiLinkClick={handleChatWikiLinkClick}
       />
     </div>
   );
