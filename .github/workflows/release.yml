@@ -1,0 +1,152 @@
+# Cuts a version and publishes the built extension to GitHub Releases in one
+# orchestrated run. Dispatched manually with an explicit semver input.
+#
+# Why one workflow: the cut job pushes the release tag with the workflow's
+# GITHUB_TOKEN, and GitHub does not start new workflow runs for events
+# triggered by GITHUB_TOKEN — so a separate tag-triggered release workflow
+# would never fire. The publish job here checks out the pushed tag directly.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to cut and publish (semver, e.g. 0.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    name: Cut version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Step-level env does not persist across steps, so the version is bound
+    # at job level for validate, bump, sync, and commit/tag alike.
+    env:
+      VERSION: ${{ inputs.version }}
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - id: validate
+        name: Validate version input
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be plain semver (X.Y.Z), got '$VERSION'"
+            exit 1
+          fi
+          # Chromium rejects extension manifests whose version components
+          # exceed 65535 — a released-but-uninstallable ZIP is worse than
+          # refusing the cut.
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          for component in "$MAJOR" "$MINOR" "$PATCH"; do
+            if (( component > 65535 )); then
+              echo "::error::version component '$component' exceeds Chromium's manifest limit of 65535"
+              exit 1
+            fi
+          done
+          if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
+            echo "::error::tag v$VERSION already exists"
+            exit 1
+          fi
+          if [[ "$VERSION" != "$(node -p "require('./package.json').version")" ]]; then
+            node -e "
+              const cmp = (a, b) => {
+                const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+                return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+              };
+              const current = require('./package.json').version;
+              if (cmp('$VERSION', current) <= 0) {
+                console.error('version must be greater than the current ' + current);
+                process.exit(1);
+              }
+            "
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Bump package.json and lockfile
+        run: npm version "$VERSION" --no-git-tag-version
+
+      - name: Sync manifest version
+        run: node scripts/set-version.js "$VERSION"
+
+      - name: Commit, tag, and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json public/manifest.json
+          git commit -m "chore: release v$VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD "refs/tags/v$VERSION"
+
+  publish:
+    name: Build and publish to GitHub Releases
+    needs: cut
+    runs-on: ubuntu-latest
+    # 30 min: the bounded npm ci envelope (2 attempts x 600s + retry delay
+    # and grace = 1225s) needs 60s headroom on top — same budget as the
+    # governed CI's test job, enforced by the runtime policy checker.
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.cut.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ env.VERSION }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify tag matches shipped versions
+        # GITHUB_REF_NAME stays the dispatch branch under workflow_dispatch,
+        # so compare against the cut job's validated version instead.
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          MAN=$(node -p "require('./public/manifest.json').version")
+          if [ "$PKG" != "$VERSION" ] || [ "$MAN" != "$VERSION" ]; then
+            echo "::error::tag v$VERSION mismatches package.json ($PKG) / manifest.json ($MAN)"
+            exit 1
+          fi
+
+      - name: Install locked dependencies
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@87c6b301057992f79a723f63c64624bf40c9d06a
+        with:
+          task: Install locked dependencies
+          executable: npm
+          arguments-json: '["ci"]'
+          timeout-seconds: '600'
+          attempts: '2'
+          retry-delay-seconds: '5'
+
+      - run: npm test
+
+      - run: npm run build
+
+      - name: Package extension
+        run: |
+          (cd dist && zip -qr "../localnotes-v${VERSION}.zip" .)
+          ls -lh "localnotes-v${VERSION}.zip"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${VERSION}" "localnotes-v${VERSION}.zip" \
+            --title "LocalNotes v${VERSION}" \
+            --generate-notes \
+            --verify-tag
