@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: 24
       - name: Authorize direct workflow event
-        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@87c6b301057992f79a723f63c64624bf40c9d06a
+        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@64ec289604e2409eb92fd718495df8a10761a20a
         with:
           authorization-only: 'true'
 
@@ -67,7 +67,7 @@ jobs:
           cache: npm
 
       - name: Install version tooling
-        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@87c6b301057992f79a723f63c64624bf40c9d06a
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@64ec289604e2409eb92fd718495df8a10761a20a
         with:
           task: Install version tooling
           executable: npm
