@@ -6,16 +6,18 @@ interface Handlers {
   onNewNote: () => void;
   onToggleGraph: () => void;
   onTogglePalette: () => void;
-  /** Escape with nothing else claiming it (delete dialog, palette). */
+  onToggleChat: () => void;
+  /** Escape with nothing else claiming it (palette, chat, delete dialog). */
   onEscape?: () => void;
 }
 
-/** Global app shortcuts: Cmd/Ctrl+N, Cmd/Ctrl+G, Cmd/Ctrl+K, Escape. */
+/** Global app shortcuts: Cmd/Ctrl+N, G, K, J, and Escape. */
 export function useKeyboardShortcuts({
   enabled = true,
   onNewNote,
   onToggleGraph,
   onTogglePalette,
+  onToggleChat,
   onEscape,
 }: Handlers) {
   useEffect(() => {
@@ -32,11 +34,14 @@ export function useKeyboardShortcuts({
       } else if (mod && key === 'k') {
         e.preventDefault();
         onTogglePalette();
+      } else if (mod && key === 'j') {
+        e.preventDefault();
+        onToggleChat();
       } else if (e.key === 'Escape') {
         onEscape?.();
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [enabled, onNewNote, onToggleGraph, onTogglePalette, onEscape]);
+  }, [enabled, onNewNote, onToggleGraph, onTogglePalette, onToggleChat, onEscape]);
 }

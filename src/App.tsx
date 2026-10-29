@@ -3,12 +3,14 @@ import { useNotes } from './hooks/useNotes';
 import { useNoteEmbeddings } from './hooks/useNoteEmbeddings';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
+import { useAgentSession } from './agent/useAgentSession';
 import { exportVault, importVault } from './storage';
 import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
 import { EmptyState } from './components/EmptyState';
 import { DeleteDialog } from './components/DeleteDialog';
 import { KnowledgeGraphView } from './components/KnowledgeGraphView';
+import { ChatOverlay } from './components/ChatOverlay';
 import {
   CommandPalette,
   type PaletteAction,
@@ -33,11 +35,13 @@ export function App() {
   const { embeddings, embeddingStatus, reindexEmbeddings } =
     useNoteEmbeddings(notes);
   const { resolved: resolvedTheme, setTheme } = useTheme();
+  const session = useAgentSession();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [isGraphOpen, setIsGraphOpen] = useState(false);
   const [graphFocusNodeId, setGraphFocusNodeId] = useState<string | null>(null);
   const [dataStatus, setDataStatus] = useState<string | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
     if (!dataStatus) return;
@@ -142,9 +146,15 @@ export function App() {
     onNewNote: handleNewNote,
     onToggleGraph: handleToggleGraph,
     onTogglePalette: () => setIsPaletteOpen((prev) => !prev),
+    onToggleChat: () => setIsChatOpen((prev) => !prev),
     onEscape: () => {
-      // The palette handles its own Escape; don't dismiss stacked layers
+      // Topmost layer first: palette self-handles Escape, then chat, then
+      // the delete dialog.
       if (isPaletteOpen) return;
+      if (isChatOpen) {
+        setIsChatOpen(false);
+        return;
+      }
       if (pendingDeleteId) setPendingDeleteId(null);
     },
   });
@@ -266,6 +276,11 @@ export function App() {
         actions={paletteActions}
         onClose={() => setIsPaletteOpen(false)}
         onSelectNote={handleSelectNoteFromPalette}
+      />
+      <ChatOverlay
+        open={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        session={session}
       />
     </div>
   );
