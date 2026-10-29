@@ -1,125 +1,180 @@
-# Cuts a version and publishes the built extension to GitHub Releases in one
-# orchestrated run. Dispatched manually with an explicit semver input.
-#
-# Why one workflow: the cut job pushes the release tag with the workflow's
-# GITHUB_TOKEN, and GitHub does not start new workflow runs for events
-# triggered by GITHUB_TOKEN — so a separate tag-triggered release workflow
-# would never fire. The publish job here checks out the pushed tag directly.
+# Tag-driven GitHub Release publication in the true-line/cartograph shape.
+# The only supported tag producer is the Version cut workflow tagging a merged
+# "Version packages" PR; this workflow validates that provenance and the exact
+# tag before building and publishing the extension zip. workflow_dispatch with
+# an existing tag is publication recovery only.
 
 name: Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to cut and publish (semver, e.g. 0.2.0)'
+      tag:
+        description: Existing annotated vX.Y.Z tag to recover or republish
         required: true
         type: string
 
-permissions:
-  contents: write
-
 concurrency:
-  group: release
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-jobs:
-  cut:
-    name: Cut version
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Step-level env does not persist across steps, so the version is bound
-    # at job level for validate, bump, sync, and commit/tag alike.
-    env:
-      VERSION: ${{ inputs.version }}
-    outputs:
-      version: ${{ steps.validate.outputs.version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+permissions:
+  actions: read
+  contents: read
 
+# Jobs run on the organisation's own runners: the Linux runner group holds one
+# x86-64 runner. A fork's pull request keeps a hosted runner, because a pull
+# request controls the workflow file it runs and would otherwise execute its
+# own code on the organisation's hardware.
+jobs:
+  policy:
+    name: Action Policy
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    timeout-minutes: 10
+    # The organisation's Linux runner does not carry Node on its default PATH.
+    steps:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+          # A release job never restores a cache another run could have written.
+          package-manager-cache: false
+      - name: Authorize direct workflow event
+        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@87c6b301057992f79a723f63c64624bf40c9d06a
+        with:
+          authorization-only: 'true'
 
-      - id: validate
-        name: Validate version input
+  validate:
+    name: Validate reviewed release tag
+    needs: policy
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Checkout exact tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # Highest-consequence context for a poisoned dependency cache; the
+          # check itself needs no packages, so caching buys nothing.
+          package-manager-cache: false
+
+      - name: Validate tag, version, and reviewed cut
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version must be plain semver (X.Y.Z), got '$VERSION'"
+          set -euo pipefail
+
+          npm run version:check
+          expected=$(node scripts/release-version.mjs tag)
+          if [ "$TAG" != "$expected" ]; then
+            echo "::error::Requested tag $TAG does not match synchronized version tag $expected."
             exit 1
           fi
-          # Chromium rejects extension manifests whose version components
-          # exceed 65535 — a released-but-uninstallable ZIP is worse than
-          # refusing the cut.
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          for component in "$MAJOR" "$MINOR" "$PATCH"; do
-            if (( component > 65535 )); then
-              echo "::error::version component '$component' exceeds Chromium's manifest limit of 65535"
-              exit 1
-            fi
-          done
-          if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
-            echo "::error::tag v$VERSION already exists"
+          if [ "$(git cat-file -t "refs/tags/$TAG")" != 'tag' ]; then
+            echo "::error::$TAG must be an annotated tag."
             exit 1
           fi
-          CURRENT=$(node -p "require('./package.json').version")
-          node -e "
-            const cmp = (a, b) => {
-              const [x, y] = [a, b].map((v) => v.split('.').map(Number));
-              return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
-            };
-            if (cmp('$VERSION', '$CURRENT') <= 0) {
-              console.error('version must be strictly greater than the current $CURRENT');
-              process.exit(1);
-            }
-          "
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Bump package.json and lockfile
-        run: npm version "$VERSION" --no-git-tag-version
+          tag_commit=$(git rev-list -n 1 "$TAG")
+          if [ "$(git rev-parse HEAD)" != "$tag_commit" ]; then
+            echo "::error::Checkout is not the commit referenced by $TAG."
+            exit 1
+          fi
+          pending=$(node scripts/release-version.mjs pending)
+          if [ -n "$pending" ]; then
+            echo "::error::$TAG still contains pending Changesets: $pending"
+            exit 1
+          fi
 
-      - name: Sync manifest version
-        run: node scripts/set-version.js "$VERSION"
+          version_pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag_commit/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .head.ref == "changeset-release/main")] | first | .number // empty')
+          if [ -z "$version_pr" ]; then
+            echo "::error::$TAG is not a merged changeset-release/main Version packages PR."
+            exit 1
+          fi
 
-      - name: Commit, tag, and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json public/manifest.json
-          git commit -m "chore: release v$VERSION"
-          git tag "v$VERSION"
-          git push origin HEAD "refs/tags/v$VERSION"
+          # The checkout keeps no credentials, so a git fetch of this private
+          # repo could only wait on authentication. Ask the API instead: main
+          # must equal or contain the tag commit.
+          ancestry=$(gh api "repos/$GITHUB_REPOSITORY/compare/$tag_commit...main" --jq .status)
+          if [ "$ancestry" != ahead ] && [ "$ancestry" != identical ]; then
+            echo "::error::$TAG does not resolve to a commit on main ($ancestry)."
+            exit 1
+          fi
+
+          # The exact cut commit must carry its own successful post-merge CI.
+          push_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=push&head_sha=$tag_commit&per_page=100" \
+            --jq 'first(.workflow_runs[] | select(.path == ".github/workflows/ci.yml" and .conclusion == "success") | .id) // empty')
+          if [ -z "$push_run" ]; then
+            echo "::error::$tag_commit lacks a successful post-merge CI run."
+            exit 1
+          fi
+          stable=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$push_run/jobs?filter=latest&per_page=100" \
+            --jq 'any(.jobs[]; .name == "CI" and .conclusion == "success")')
+          if [ "$stable" != true ]; then
+            echo "::error::$tag_commit lacks a successful stable CI gate."
+            exit 1
+          fi
+
+          # The Version packages PR is the human review point of the cut.
+          approved=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$version_pr/reviews?per_page=100" \
+            --jq 'any(.[]; .state == "APPROVED")')
+          if [ "$approved" != true ]; then
+            echo "::error::Version packages PR #$version_pr lacks an approval."
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Validated $TAG at reviewed Version packages PR #$version_pr."
 
   publish:
-    name: Build and publish to GitHub Releases
-    needs: cut
-    runs-on: ubuntu-latest
-    # 30 min: the bounded npm ci envelope (2 attempts x 600s + retry delay
-    # and grace = 1225s) needs 60s headroom on top — same budget as the
-    # governed CI's test job, enforced by the runtime policy checker.
+    name: Build and publish GitHub Release
+    needs: validate
+    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    # 30 min: the bounded npm ci envelope (2 attempts x 600s + retry delay and
+    # grace = 1225s) needs 60s headroom on top — same budget as the governed
+    # CI test job, enforced by the runtime policy checker.
     timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
     env:
-      VERSION: ${{ needs.cut.outputs.version }}
+      TAG: ${{ needs.validate.outputs.tag }}
+      VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout exact tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: v${{ env.VERSION }}
+          ref: ${{ needs.validate.outputs.tag }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          cache: npm
-
-      - name: Verify tag matches shipped versions
-        # GITHUB_REF_NAME stays the dispatch branch under workflow_dispatch,
-        # so compare against the cut job's validated version instead.
-        run: |
-          PKG=$(node -p "require('./package.json').version")
-          MAN=$(node -p "require('./public/manifest.json').version")
-          if [ "$PKG" != "$VERSION" ] || [ "$MAN" != "$VERSION" ]; then
-            echo "::error::tag v$VERSION mismatches package.json ($PKG) / manifest.json ($MAN)"
-            exit 1
-          fi
+          # This is the highest-consequence context for a poisoned dependency
+          # cache; the test suite must run against a cold, registry-resolved
+          # install.
+          package-manager-cache: false
 
       - name: Install locked dependencies
         uses: true-line/trueline-agent-ci/.github/actions/bounded-command@87c6b301057992f79a723f63c64624bf40c9d06a
@@ -140,11 +195,39 @@ jobs:
           (cd dist && zip -qr "../localnotes-v${VERSION}.zip" .)
           ls -lh "localnotes-v${VERSION}.zip"
 
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Prepare release notes
         run: |
-          gh release create "v${VERSION}" "localnotes-v${VERSION}.zip" \
-            --title "LocalNotes v${VERSION}" \
-            --generate-notes \
-            --verify-tag
+          node scripts/release-notes.mjs "$VERSION" > release-notes.md
+          echo "--- release notes ---"
+          cat release-notes.md
+
+      - name: Require chores-dumb credentials
+        run: test "${{ secrets.CHORES_DUMB_CLIENT_ID != '' && secrets.CHORES_DUMB_PRIVATE_KEY != '' }}" = true
+
+      - name: Mint the chores-dumb token
+        id: chores
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.CHORES_DUMB_CLIENT_ID }}
+          private-key: ${{ secrets.CHORES_DUMB_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.chores.outputs.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --verify-tag \
+              --draft=false \
+              --title "LocalNotes $TAG" \
+              --notes-file release-notes.md
+            gh release upload "$TAG" "localnotes-v${VERSION}.zip" --clobber
+          else
+            gh release create "$TAG" "localnotes-v${VERSION}.zip" \
+              --verify-tag \
+              --latest \
+              --title "LocalNotes $TAG" \
+              --notes-file release-notes.md
+          fi
