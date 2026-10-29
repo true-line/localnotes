@@ -20,6 +20,7 @@ function fakeSession(overrides: Partial<AgentSession> = {}): AgentSession {
     messages: [],
     isStreaming: false,
     lastError: null,
+    canRetry: false,
     send: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn(),
     retry: vi.fn().mockResolvedValue(undefined),
@@ -103,5 +104,20 @@ describe('ChatOverlay', () => {
     );
     await user.click(screen.getByRole('button', { name: '[[My Note]]' }));
     expect(onWikiLinkClick).toHaveBeenCalledWith('My Note');
+  });
+
+  it('offers retry only when a previous input can be re-sent', async () => {
+    const user = userEvent.setup();
+    const retry = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ChatOverlay open onClose={vi.fn()} session={fakeSession({ canRetry: true, retry })} />
+    );
+    await user.click(screen.getByRole('button', { name: /retry last message/i }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides retry when there is nothing to retry', () => {
+    render(<ChatOverlay open onClose={vi.fn()} session={fakeSession({ canRetry: false })} />);
+    expect(screen.queryByRole('button', { name: /retry last message/i })).toBeNull();
   });
 });

@@ -11,6 +11,8 @@ export interface AgentSession {
   messages: AgentMessage[];
   isStreaming: boolean;
   lastError: string | null;
+  /** True when a previous input exists and can be re-sent via retry(). */
+  canRetry: boolean;
   send: (text: string, attachments?: ContextAttachment[]) => Promise<void>;
   stop: () => void;
   retry: () => Promise<void>;
@@ -26,6 +28,7 @@ export function useAgentSession(initialProviderId?: string): AgentSession {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [hasLastInput, setHasLastInput] = useState(false);
   const runtimeRef = useRef(new AgentRuntime());
   const lastInputRef = useRef<{
     text: string;
@@ -42,6 +45,7 @@ export function useAgentSession(initialProviderId?: string): AgentSession {
         return;
       }
       lastInputRef.current = { text, attachments };
+      setHasLastInput(true);
       setLastError(null);
       streamingRef.current = true;
       setIsStreaming(true);
@@ -81,6 +85,7 @@ export function useAgentSession(initialProviderId?: string): AgentSession {
     lastInputRef.current = null;
     setMessages([]);
     setLastError(null);
+    setHasLastInput(false);
   }, []);
 
   const clear = useCallback(() => {
@@ -88,6 +93,7 @@ export function useAgentSession(initialProviderId?: string): AgentSession {
     lastInputRef.current = null;
     setMessages([]);
     setLastError(null);
+    setHasLastInput(false);
   }, []);
 
   return {
@@ -97,6 +103,7 @@ export function useAgentSession(initialProviderId?: string): AgentSession {
     messages,
     isStreaming,
     lastError,
+    canRetry: hasLastInput && !isStreaming,
     send,
     stop,
     retry,

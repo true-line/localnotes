@@ -190,16 +190,29 @@ export function ChatOverlay({
             ■
           </button>
         ) : (
-          <button
-            type="button"
-            className="agent-chat__send"
-            onClick={send}
-            disabled={!canSend}
-            aria-label="Send message"
-            title="Send (Enter)"
-          >
-            ➤
-          </button>
+          <>
+            {session.canRetry && (
+              <button
+                type="button"
+                className="agent-chat__retry"
+                onClick={() => void session.retry()}
+                aria-label="Retry last message"
+                title="Retry last (re-sends your previous message)"
+              >
+                ↻
+              </button>
+            )}
+            <button
+              type="button"
+              className="agent-chat__send"
+              onClick={send}
+              disabled={!canSend}
+              aria-label="Send message"
+              title="Send (Enter)"
+            >
+              ➤
+            </button>
+          </>
         )}
       </div>
     </aside>

@@ -91,10 +91,12 @@ describe('useAgentSession', () => {
     await act(async () => {
       await result.current.send('hello');
     });
+    expect(result.current.canRetry).toBe(true);
     act(() => {
       result.current.clear();
     });
     expect(result.current.messages).toEqual([]);
+    expect(result.current.canRetry).toBe(false);
     expect(result.current.lastError).toBeNull();
   });
 });
