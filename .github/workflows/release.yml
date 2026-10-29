@@ -191,9 +191,8 @@ jobs:
       - run: npm run build
 
       - name: Package extension
-        run: |
-          (cd dist && zip -qr "../localnotes-v${VERSION}.zip" .)
-          ls -lh "localnotes-v${VERSION}.zip"
+        # adm-zip via node: the self-hosted runner does not carry a zip binary
+        run: node scripts/package-extension.mjs && ls -lh "localnotes-v${VERSION}.zip"
 
       - name: Prepare release notes
         run: |
