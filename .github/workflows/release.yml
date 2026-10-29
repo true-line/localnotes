@@ -48,6 +48,16 @@ jobs:
             echo "::error::version must be plain semver (X.Y.Z), got '$VERSION'"
             exit 1
           fi
+          # Chromium rejects extension manifests whose version components
+          # exceed 65535 — a released-but-uninstallable ZIP is worse than
+          # refusing the cut.
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          for component in "$MAJOR" "$MINOR" "$PATCH"; do
+            if (( component > 65535 )); then
+              echo "::error::version component '$component' exceeds Chromium's manifest limit of 65535"
+              exit 1
+            fi
+          done
           if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
             echo "::error::tag v$VERSION already exists"
             exit 1
