@@ -62,19 +62,17 @@ jobs:
             echo "::error::tag v$VERSION already exists"
             exit 1
           fi
-          if [[ "$VERSION" != "$(node -p "require('./package.json').version")" ]]; then
-            node -e "
-              const cmp = (a, b) => {
-                const [x, y] = [a, b].map((v) => v.split('.').map(Number));
-                return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
-              };
-              const current = require('./package.json').version;
-              if (cmp('$VERSION', current) <= 0) {
-                console.error('version must be greater than the current ' + current);
-                process.exit(1);
-              }
-            "
-          fi
+          CURRENT=$(node -p "require('./package.json').version")
+          node -e "
+            const cmp = (a, b) => {
+              const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+              return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+            };
+            if (cmp('$VERSION', '$CURRENT') <= 0) {
+              console.error('version must be strictly greater than the current $CURRENT');
+              process.exit(1);
+            }
+          "
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Bump package.json and lockfile

@@ -15,7 +15,11 @@
     "test:file": "npm run test:file:inner --",
     "test:file:inner": "vitest run",
     "test:inner": "npm run check:agent-context && vitest run src",
-    "icons": "node scripts/generate-icons.js"
+    "icons": "node scripts/generate-icons.js",
+    "changeset": "changeset",
+    "changeset:version": "changeset version && npm run version:sync",
+    "version:check": "node scripts/version.mjs check",
+    "version:sync": "node scripts/version.mjs sync"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
@@ -27,6 +31,7 @@
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
