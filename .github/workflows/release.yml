@@ -42,7 +42,7 @@ jobs:
           # A release job never restores a cache another run could have written.
           package-manager-cache: false
       - name: Authorize direct workflow event
-        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@64ec289604e2409eb92fd718495df8a10761a20a
+        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@b1c6bf80380f35e83168bcbef5b86d89b0d652e3
         with:
           authorization-only: 'true'
 
@@ -177,7 +177,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install locked dependencies
-        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@64ec289604e2409eb92fd718495df8a10761a20a
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@b1c6bf80380f35e83168bcbef5b86d89b0d652e3
         with:
           task: Install locked dependencies
           executable: npm
@@ -191,9 +191,8 @@ jobs:
       - run: npm run build
 
       - name: Package extension
-        run: |
-          (cd dist && zip -qr "../localnotes-v${VERSION}.zip" .)
-          ls -lh "localnotes-v${VERSION}.zip"
+        # adm-zip via node: the self-hosted runner does not carry a zip binary
+        run: node scripts/package-extension.mjs && ls -lh "localnotes-v${VERSION}.zip"
 
       - name: Prepare release notes
         run: |

@@ -52,7 +52,7 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - id: policy
-        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@64ec289604e2409eb92fd718495df8a10761a20a
+        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@b1c6bf80380f35e83168bcbef5b86d89b0d652e3
 
   merge-evidence:
     name: Verify merged commit evidence
@@ -118,7 +118,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install locked dependencies
-        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@64ec289604e2409eb92fd718495df8a10761a20a
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@b1c6bf80380f35e83168bcbef5b86d89b0d652e3
         with:
           task: Install locked dependencies
           executable: npm
@@ -145,7 +145,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install locked smoke dependencies
-        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@64ec289604e2409eb92fd718495df8a10761a20a
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@b1c6bf80380f35e83168bcbef5b86d89b0d652e3
         with:
           task: Install locked smoke dependencies
           executable: npm
@@ -186,7 +186,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: true-line/trueline-agent-ci
-          ref: 64ec289604e2409eb92fd718495df8a10761a20a
+          ref: b1c6bf80380f35e83168bcbef5b86d89b0d652e3
           path: .ci-runtime-policy
           sparse-checkout: tools/ci-runtime
           persist-credentials: false
