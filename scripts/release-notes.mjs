@@ -14,15 +14,18 @@ const DEFAULT_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
 export function releaseNotes(version, root = DEFAULT_ROOT) {
   const changelogPath = path.join(root, 'CHANGELOG.md');
   if (existsSync(changelogPath)) {
-    const source = readFileSync(changelogPath, 'utf8');
-    const header = `## ${version}`;
-    const start = source.indexOf(header);
-    if (start >= 0) {
-      const contentStart = start + header.length;
-      const next = source.slice(contentStart).search(/^## /mu);
-      const section = source
-        .slice(contentStart, next < 0 ? undefined : contentStart + next)
-        .trim();
+    // Exact header-line equality: `## 0.1.1` must not match `## 0.1.10`
+    const lines = readFileSync(changelogPath, 'utf8').split('\n');
+    const startIdx = lines.findIndex((line) => line.trim() === `## ${version}`);
+    if (startIdx >= 0) {
+      let endIdx = lines.length;
+      for (let i = startIdx + 1; i < lines.length; i++) {
+        if (lines[i].startsWith('## ')) {
+          endIdx = i;
+          break;
+        }
+      }
+      const section = lines.slice(startIdx + 1, endIdx).join('\n').trim();
       if (section) return section;
     }
   }

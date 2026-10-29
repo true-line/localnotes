@@ -4,6 +4,12 @@
 # release-cut operation. The tag job tags the merged cut with the chores-dumb
 # App token — an App-token tag push is what starts the Release workflow
 # (a GITHUB_TOKEN tag push never triggers workflows).
+#
+# Every job here runs on hosted runners on purpose: this workflow is API-only
+# except for a short install, and the tag job can wait on the merged commit's
+# CI for a long time — occupying the single self-hosted Linux runner would
+# prevent that very CI from finishing (GitHub queues unmatched jobs, so the
+# waiter and the waited-on work would deadlock).
 
 name: Version cut
 
@@ -20,17 +26,11 @@ concurrency:
 permissions:
   contents: read
 
-# Jobs run on the organisation's own runners: the Linux runner group holds one
-# x86-64 runner. A fork's pull request keeps a hosted runner, because a pull
-# request controls the workflow file it runs and would otherwise execute its
-# own code on the organisation's hardware.
 jobs:
   policy:
     name: Action Policy
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-    # The organisation's Linux runner does not carry Node on its default PATH;
-    # install it before anything needs node.
     steps:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -43,7 +43,7 @@ jobs:
   version-pr:
     name: Version packages PR
     needs: policy
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       has-releases: ${{ steps.version.outputs.has-releases }}
@@ -85,10 +85,12 @@ jobs:
           git show-ref --verify --quiet refs/heads/main || git branch main origin/main
           status_file="$RUNNER_TEMP/changeset-status.json"
           releases=0
-          # With no release tag yet, changeset v3 exits nonzero on a clean main
-          # ("changed but no changesets"); treat a genuinely empty changeset
-          # directory as nothing pending, and let real config errors fail.
-          if compgen -G '.changeset/*.md' >/dev/null; then
+          # Pending releases == changeset files other than the README. (With
+          # no release tag yet, `changeset status` is fine once real changesets
+          # exist; it only exits nonzero when there is nothing pending.) A mere
+          # README must not count, or the post-Version-merge run would always
+          # re-run status and fail.
+          if find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | grep -q .; then
             npx changeset status --output "$status_file"
             releases=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).releases.length' "$status_file")
           fi
@@ -181,10 +183,10 @@ jobs:
   tag:
     name: Tag version merges
     needs: [policy, version-pr]
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
-    # The exact-commit CI poll is allowed to wait on the single self-hosted
-    # runner; leave setup and publication headroom without returning to
-    # GitHub's unbounded six-hour default.
+    # Hosted runner: this job is an API-only poll that can wait a long time
+    # for the merged commit's CI — it must not hold the self-hosted runner
+    # that CI itself needs (that would deadlock the release).
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
       actions: read
