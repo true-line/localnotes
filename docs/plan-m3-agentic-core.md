@@ -4,6 +4,20 @@ Implements [#39](https://github.com/true-line/localnotes/issues/39) per
 [docs/roadmap.md](roadmap.md) Phase 2 steps A+B. Shipped as **two PRs** (A: provider core
 + chat UI; B: tools + context chips) so review stays tractable.
 
+## 0. Implementation status (2026-10-29)
+
+**PR A shipped** (#50): runtime, registry, mock provider, session hook, ChatOverlay
+(Cmd+J), shortcuts — with review-round amendments beyond this plan: wikilinks in replies
+navigate find-or-create, Escape layering centralized (palette > chat > delete dialog),
+palette blocks chat focus-stealing, retry control exposed via `canRetry`.
+
+**Drift vs this plan:** the mock provider does not yet emit `tool-call` events — the
+tool-execution demo (§6) lands with PR B's tools, not before. Tool loop in the runtime
+is already live and tested (§8 runtime tests), so PR B is additive.
+
+**Also shipped post-plan:** the changesets release pipeline (v0.2.1 published) — M3 PRs
+now carry changesets per repo convention.
+
 ## 1. Goal and guardrails
 
 A chat drawer usable **on any view**, with an **agent selector**, **streaming** markdown
