@@ -4,6 +4,7 @@ import { useNoteEmbeddings } from './hooks/useNoteEmbeddings';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
 import { useAgentSession } from './agent/useAgentSession';
+import { normalizeKey } from './knowledgeGraph';
 import { exportVault, importVault } from './storage';
 import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
@@ -167,6 +168,21 @@ export function App() {
     [selectNote]
   );
 
+  // Wikilinks inside agent replies navigate exactly like editor wikilinks:
+  // open the note if it exists, otherwise offer a fresh note with that title.
+  const handleChatWikiLinkClick = useCallback(
+    (target: string) => {
+      const norm = normalizeKey(target);
+      const existing = notes.find((n) => normalizeKey(n.title) === norm);
+      if (existing) {
+        handleSelectNote(existing.id);
+      } else {
+        handleCreateConceptNote(target);
+      }
+    },
+    [notes, handleSelectNote, handleCreateConceptNote]
+  );
+
   const paletteActions: PaletteAction[] = [
     { id: 'new-note', label: 'New note', hint: '⌘N', run: handleNewNote },
     {
@@ -281,6 +297,7 @@ export function App() {
         open={isChatOpen}
         onClose={() => setIsChatOpen(false)}
         session={session}
+        onWikiLinkClick={handleChatWikiLinkClick}
       />
     </div>
   );

@@ -88,4 +88,20 @@ describe('ChatOverlay', () => {
     render(<ChatOverlay open onClose={vi.fn()} session={session} />);
     expect(screen.getByRole('alert')).toHaveTextContent(/connection reset/);
   });
+
+  it('navigates wikilinks inside assistant replies', async () => {
+    const user = userEvent.setup();
+    const onWikiLinkClick = vi.fn();
+    const session = fakeSession({
+      messages: [
+        { role: 'user', content: 'where should I look?' },
+        { role: 'assistant', content: 'Check [[My Note]] for details.' },
+      ],
+    });
+    render(
+      <ChatOverlay open onClose={vi.fn()} session={session} onWikiLinkClick={onWikiLinkClick} />
+    );
+    await user.click(screen.getByRole('button', { name: '[[My Note]]' }));
+    expect(onWikiLinkClick).toHaveBeenCalledWith('My Note');
+  });
 });

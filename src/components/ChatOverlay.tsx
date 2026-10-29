@@ -7,9 +7,18 @@ interface Props {
   open: boolean;
   onClose: () => void;
   session: AgentSession;
+  /** Wikilinks inside assistant replies navigate like editor wikilinks. */
+  onWikiLinkClick?: (target: string) => void;
+  onTagClick?: (tag: string) => void;
 }
 
-export function ChatOverlay({ open, onClose, session }: Props) {
+export function ChatOverlay({
+  open,
+  onClose,
+  session,
+  onWikiLinkClick,
+  onTagClick,
+}: Props) {
   const [draft, setDraft] = useState('');
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -133,7 +142,11 @@ export function ChatOverlay({ open, onClose, session }: Props) {
                   {isPending ? (
                     <span className="agent-chat__pending">Thinking…</span>
                   ) : (
-                    <MarkdownRenderer content={message.content} />
+                    <MarkdownRenderer
+                      content={message.content}
+                      onWikiLinkClick={onWikiLinkClick}
+                      onTagClick={onTagClick}
+                    />
                   )}
                 </div>
               );

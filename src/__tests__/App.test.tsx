@@ -247,6 +247,21 @@ describe('App integration', () => {
     );
   }, 10_000);
 
+  it('keeps the delete dialog open when Escape closes the chat above it', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('button', { name: 'Delete note' }));
+    await user.keyboard('{Meta>}j{/Meta}');
+    await screen.findByRole('complementary', { name: /agent chat/i });
+
+    await user.keyboard('{Escape}');
+    expect(
+      screen.queryByRole('complementary', { name: /agent chat/i })
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);
