@@ -1,5 +1,11 @@
 # localnotes
 
+## 0.2.1
+
+### Patch Changes
+
+- 7f05cc1: Release packaging fix: the extension zip is now built with adm-zip via node instead of the zip binary, which the self-hosted runner does not carry. No app behavior changes.
+
 ## 0.2.0
 
 ### Minor Changes
