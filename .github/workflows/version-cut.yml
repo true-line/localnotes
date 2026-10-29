@@ -1,0 +1,340 @@
+# Version automation in the true-line/cartograph shape: changesets accumulate
+# in PRs, this workflow maintains the reviewed "Version packages" PR, and
+# merging that PR (with green exact-commit CI) is the only supported
+# release-cut operation. The tag job tags the merged cut with the chores-dumb
+# App token — an App-token tag push is what starts the Release workflow
+# (a GITHUB_TOKEN tag push never triggers workflows).
+#
+# Every job here runs on hosted runners on purpose: this workflow is API-only
+# except for a short install, and the tag job can wait on the merged commit's
+# CI for a long time — occupying the single self-hosted Linux runner would
+# prevent that very CI from finishing (GitHub queues unmatched jobs, so the
+# waiter and the waited-on work would deadlock).
+
+name: Version cut
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: version-cut
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: Action Policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Authorize direct workflow event
+        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@87c6b301057992f79a723f63c64624bf40c9d06a
+        with:
+          authorization-only: 'true'
+
+  version-pr:
+    name: Version packages PR
+    needs: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      has-releases: ${{ steps.version.outputs.has-releases }}
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    env:
+      HAS_CHORES_DUMB: ${{ secrets.CHORES_DUMB_CLIENT_ID != '' && secrets.CHORES_DUMB_PRIVATE_KEY != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install version tooling
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@87c6b301057992f79a723f63c64624bf40c9d06a
+        with:
+          task: Install version tooling
+          executable: npm
+          arguments-json: '["ci","--ignore-scripts"]'
+          timeout-seconds: '300'
+          attempts: '2'
+          retry-delay-seconds: '5'
+
+      - name: Create the Version packages commit
+        id: version
+        env:
+          BRANCH: changeset-release/main
+        run: |
+          set -euo pipefail
+          git show-ref --verify --quiet refs/heads/main || git branch main origin/main
+          status_file="$RUNNER_TEMP/changeset-status.json"
+          releases=0
+          # Pending releases == changeset files other than the README. (With
+          # no release tag yet, `changeset status` is fine once real changesets
+          # exist; it only exits nonzero when there is nothing pending.) A mere
+          # README must not count, or the post-Version-merge run would always
+          # re-run status and fail.
+          if find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | grep -q .; then
+            npx changeset status --output "$status_file"
+            releases=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).releases.length' "$status_file")
+          fi
+          if [ "$releases" -eq 0 ]; then
+            echo 'has-releases=false' >> "$GITHUB_OUTPUT"
+            echo 'No package releases pending — nothing to version.'
+            exit 0
+          fi
+          echo 'has-releases=true' >> "$GITHUB_OUTPUT"
+          npm run changeset:version
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$BRANCH"
+          git add -A
+          if git diff --cached --quiet; then
+            echo '::warning::Changesets are pending but versioning changed nothing.'
+            exit 0
+          fi
+          git commit -m 'Version packages'
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+
+      - name: Require chores-dumb credentials
+        if: steps.version.outputs.ready == 'true'
+        run: test "$HAS_CHORES_DUMB" = true
+
+      - name: Mint the chores-dumb token
+        if: steps.version.outputs.ready == 'true'
+        id: chores
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.CHORES_DUMB_CLIENT_ID }}
+          private-key: ${{ secrets.CHORES_DUMB_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push and refresh the Version packages PR
+        if: steps.version.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.chores.outputs.token }}
+          BRANCH: changeset-release/main
+          # A credential problem must fail the step, not wait on a prompt the
+          # runner can never answer.
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          # Skip the force-push when the regenerated release patch is identical
+          # to what the open Version packages PR already carries: a force-push
+          # always mints a new head SHA, which re-runs a complete suite even
+          # though nothing about the release actually changed. patch-id hashes
+          # the diff content itself, so it matches across the two commits'
+          # different parents.
+          open_sha=$(gh pr list --head "$BRANCH" --base main --state open --json headRefOid --jq '.[0].headRefOid // empty')
+          if [ -n "$open_sha" ]; then
+            new_patch_id=$(git diff-tree -p HEAD | git patch-id --stable | awk '{print $1}')
+            # actions/checkout removed its credentials, so this one fetch
+            # authenticates with the chores-dumb token for this command only;
+            # nothing is written to .git/config.
+            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+            echo "::add-mask::$auth"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+              fetch origin "$open_sha" --depth=2 --quiet
+            old_patch_id=$(git diff-tree -p "$open_sha" | git patch-id --stable | awk '{print $1}')
+            if [ -n "$new_patch_id" ] && [ "$new_patch_id" = "$old_patch_id" ]; then
+              echo "Regenerated release patch matches the open Version packages PR ($open_sha); skipping the force-push."
+              exit 0
+            fi
+          fi
+          # The runner-authored commit is only a local staging point: the
+          # default-branch rulesets require signed commits, so the branch is
+          # written through the git data API as chores-dumb, which GitHub
+          # signs and reports as verified.
+          node scripts/version-commit.mjs publish \
+            --repo "$GITHUB_REPOSITORY" \
+            --branch "$BRANCH" \
+            --base "$GITHUB_SHA" \
+            --message 'Version packages'
+          {
+            echo "Merging this PR cuts v$version."
+            echo
+            echo 'Generated by the reviewed version workflow; do not hand-edit.'
+          } > "$RUNNER_TEMP/pr-body.md"
+          open=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$open" ]; then
+            gh pr edit "$open" --body-file "$RUNNER_TEMP/pr-body.md"
+          else
+            gh pr create --base main --head "$BRANCH" --title 'Version packages' --body-file "$RUNNER_TEMP/pr-body.md"
+          fi
+
+  tag:
+    name: Tag version merges
+    needs: [policy, version-pr]
+    # Hosted runner: this job is an API-only poll that can wait a long time
+    # for the merged commit's CI — it must not hold the self-hosted runner
+    # that CI itself needs (that would deadlock the release).
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    env:
+      HAS_CHORES_DUMB: ${{ secrets.CHORES_DUMB_CLIENT_ID != '' && secrets.CHORES_DUMB_PRIVATE_KEY != '' }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Tag a fresh reviewed version cut
+        id: tag
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          HAS_RELEASES: ${{ needs.version-pr.outputs.has-releases }}
+        run: |
+          set -euo pipefail
+
+          npm run version:check
+          current=$(node -p 'require("./package.json").version')
+
+          tag=$(node scripts/release-version.mjs tag)
+          if [ "$EVENT_NAME" = "push" ]; then
+            previous=$(git show "$BEFORE_SHA:package.json" 2>/dev/null \
+              | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version' \
+              2>/dev/null || true)
+            if [ -z "$previous" ] || [ "$previous" = "$current" ]; then
+              echo "Version did not change ($current); nothing to tag."
+              echo 'kind=none' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            cut_commit=$(git rev-parse HEAD)
+          else
+            # Manual dispatch is publication recovery only. It must never infer
+            # or create a missing tag from arbitrary version history.
+            if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "::error::Manual recovery requires an existing $tag tag."
+              exit 1
+            fi
+            cut_commit=$(git rev-list -n 1 "$tag")
+          fi
+
+          # Prove this commit came from the bot-maintained, reviewed version PR;
+          # a mere version difference is not release authorization.
+          version_pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$cut_commit/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .head.ref == "changeset-release/main")] | first | .number // empty')
+          if [ -z "$version_pr" ]; then
+            echo "::error::$cut_commit is not a merged changeset-release/main PR."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            tagged_commit=$(git rev-list -n 1 "$tag")
+            if [ "$tagged_commit" != "$cut_commit" ]; then
+              echo "::error::$tag points to $tagged_commit, not cut $cut_commit; tags are immutable."
+              exit 1
+            fi
+            echo "$tag already exists at reviewed Version packages PR #$version_pr."
+            if ! gh release view "$tag" >/dev/null 2>&1; then
+              echo "$tag has no GitHub Release; recovery is required."
+              echo 'kind=recover' >> "$GITHUB_OUTPUT"
+              echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            else
+              echo 'kind=none' >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          pending=$(node scripts/release-version.mjs pending)
+          if [ "$HAS_RELEASES" = true ] || [ -n "$pending" ]; then
+            echo "Changesets remain pending ($pending); nothing to tag."
+            echo 'kind=none' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The version PR follows the normal ready/queue lifecycle. Wait for
+          # the exact main commit's stable CI result; do not dispatch another
+          # equivalent suite from version automation.
+          ci_run=''
+          for _ in $(seq 1 140); do
+            ci_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=push&head_sha=$cut_commit&per_page=100" \
+              --jq 'first(.workflow_runs[] | select(.path == ".github/workflows/ci.yml") | .id) // empty')
+            if [ -n "$ci_run" ]; then
+              conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ci_run" --jq '.conclusion // empty')
+              if [ "$conclusion" = success ]; then
+                break
+              fi
+              if [ -n "$conclusion" ]; then
+                echo "::error::Exact-commit CI concluded $conclusion; refusing to tag."
+                exit 1
+              fi
+            fi
+            sleep 30
+          done
+          if [ -z "$ci_run" ]; then
+            echo "::error::No completed CI run found for exact cut commit $cut_commit."
+            exit 1
+          fi
+          stable=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ci_run/jobs?filter=latest&per_page=100" \
+            --jq 'any(.jobs[]; .name == "CI" and .conclusion == "success")')
+          if [ "$stable" != true ]; then
+            echo "::error::Exact-commit CI lacks a successful stable CI gate."
+            exit 1
+          fi
+
+          echo 'kind=tag' >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "cut_commit=$cut_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Require chores-dumb credentials
+        if: steps.tag.outputs.kind != 'none'
+        run: test "$HAS_CHORES_DUMB" = true
+
+      - name: Mint the chores-dumb token
+        if: steps.tag.outputs.kind != 'none'
+        id: chores
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.CHORES_DUMB_CLIENT_ID }}
+          private-key: ${{ secrets.CHORES_DUMB_PRIVATE_KEY }}
+          permission-contents: write
+          permission-actions: write
+
+      - name: Publish tag or recover release
+        if: steps.tag.outputs.kind != 'none'
+        env:
+          GH_TOKEN: ${{ steps.chores.outputs.token }}
+          KIND: ${{ steps.tag.outputs.kind }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          CUT_COMMIT: ${{ steps.tag.outputs.cut_commit }}
+        run: |
+          set -euo pipefail
+          if [ "$KIND" = recover ]; then
+            gh workflow run release.yml --ref main -f tag="$TAG"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" "$CUT_COMMIT" -m "Release $TAG"
+          git -c 'credential.helper=!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f' push origin "$TAG"
