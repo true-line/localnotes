@@ -24,9 +24,12 @@ export function ChatOverlay({
   onTagClick,
 }: Props) {
   const [draft, setDraft] = useState('');
-  const [activeIds, setActiveIds] = useState<Set<string>>(
-    () => new Set(attachmentOptions.filter((a) => a.defaultActive).map((a) => a.id))
-  );
+  const [activeIds, setActiveIds] = useState<Set<string>>(new Set());
+  // Chips the user has already decided about (toggled) or that were offered:
+  // defaultActive applies exactly once per chip, the first time it appears —
+  // later appearances (notes hydrating, note switching) must not fight the
+  // user's explicit toggle-off.
+  const decidedIdsRef = useRef<Set<string>>(new Set());
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
@@ -36,17 +39,31 @@ export function ChatOverlay({
     session.providers[0];
 
   useEffect(() => {
-    // Drop active ids that no longer exist (e.g. Selection when deselected)
     setActiveIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const option of attachmentOptions) {
+        const firstAppearance = !decidedIdsRef.current.has(option.id);
+        decidedIdsRef.current.add(option.id);
+        if (firstAppearance && option.defaultActive && !next.has(option.id)) {
+          next.add(option.id);
+          changed = true;
+        }
+      }
+      // Drop ids that no longer exist (e.g. Selection when deselected)
       const valid = new Set(attachmentOptions.map((a) => a.id));
-      const next = new Set([...prev].filter((id) => valid.has(id)));
-      const changed =
-        next.size !== prev.size || [...next].some((id) => !prev.has(id));
+      for (const id of [...next]) {
+        if (!valid.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
       return changed ? next : prev;
     });
   }, [attachmentOptions]);
 
   const toggleChip = (id: string) => {
+    decidedIdsRef.current.add(id);
     setActiveIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);

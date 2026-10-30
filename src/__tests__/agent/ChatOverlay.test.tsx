@@ -121,6 +121,24 @@ describe('ChatOverlay', () => {
     expect(screen.queryByRole('button', { name: /retry last message/i })).toBeNull();
   });
 
+  it('activates a defaultActive chip the first time it appears, not only at mount', () => {
+    // Mount with no options (normal startup: notes still hydrating)
+    const options = [{ id: 'current-note', label: 'Current note', content: 'x', defaultActive: true }];
+    const { rerender } = render(
+      <ChatOverlay open onClose={vi.fn()} session={fakeSession()} attachmentOptions={[]} />
+    );
+    expect(screen.queryByRole('button', { name: 'Current note' })).toBeNull();
+
+    // Notes hydrate and the current-note chip appears — it must activate
+    rerender(<ChatOverlay open onClose={vi.fn()} session={fakeSession()} attachmentOptions={options} />);
+    expect(screen.getByRole('button', { name: 'Current note' })).toHaveAttribute('aria-pressed', 'true');
+
+    // User toggles it off; a re-render with the same option must not re-activate it
+    fireEvent.click(screen.getByRole('button', { name: 'Current note' }));
+    rerender(<ChatOverlay open onClose={vi.fn()} session={fakeSession()} attachmentOptions={options} />);
+    expect(screen.getByRole('button', { name: 'Current note' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('renders context chips, toggles them, and snapshots active ones at send', async () => {
     const user = userEvent.setup();
     const send = vi.fn().mockResolvedValue(undefined);

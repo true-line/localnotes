@@ -13,8 +13,7 @@ function chunkReply(text: string): string[] {
   return chunks;
 }
 
-function buildReply(lastUserTurn: string): string {
-  const contextCount = (lastUserTurn.match(/<context /g) ?? []).length;
+function buildReply(lastUserTurn: string, contextCount: number): string {
   const quoted =
     lastUserTurn.length > 120 ? `${lastUserTurn.slice(0, 120)}…` : lastUserTurn;
   return [
@@ -45,7 +44,10 @@ export function createMockProvider(): AgentProvider {
     localOnly: true,
     async *stream(messages, { tools, signal }): AsyncGenerator<StreamEvent> {
       const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+      // Context blocks live in the enriched `content`; the user's own words
+      // are in `displayText`.
       const text = lastUser?.displayText ?? lastUser?.content ?? '';
+      const contextCount = (lastUser?.content.match(/<context /g) ?? []).length;
       const match = SEARCH_RE.exec(text);
       if (match && tools.some((t) => t.name === 'notes.search')) {
         yield {
@@ -59,7 +61,7 @@ export function createMockProvider(): AgentProvider {
         };
         return;
       }
-      const reply = buildReply(text);
+      const reply = buildReply(text, contextCount);
       for (const chunk of chunkReply(reply)) {
         if (signal.aborted) return;
         await delay(CHUNK_DELAY_MS);

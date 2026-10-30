@@ -48,6 +48,12 @@ export function App() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [selectionText, setSelectionText] = useState('');
 
+  // The Selection chip must reflect the CURRENT note: switching notes (or
+  // deleting the selection's source) invalidates the reported text.
+  useEffect(() => {
+    setSelectionText('');
+  }, [selectedId]);
+
   // Tier-0 read-only facade for agent tools: nothing here can mutate the vault.
   const tools = useMemo(() => {
     const ctx: ToolContext = {
@@ -89,7 +95,12 @@ export function App() {
       });
     }
     if (selectionText.trim()) {
-      options.push({ id: 'selection', label: 'Selection', content: selectionText });
+      options.push({
+        id: 'selection',
+        label: 'Selection',
+        content: selectionText,
+        defaultActive: true,
+      });
     }
     if (notes.length > 0) {
       options.push({
