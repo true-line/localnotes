@@ -51,7 +51,14 @@ jobs:
           case "$FALLBACK_MINUTES" in '' | *[!0-9]*) FALLBACK_MINUTES=10 ;; esac
 
           oldest=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100" \
-            --jq 'min_by(.created_at) | .created_at // empty' 2>/dev/null) || oldest=''
+            --jq 'min_by(.created_at) | .created_at // empty' 2>/dev/null) ||
+            {
+              # A failed queue read is not an empty queue: unknown fleet
+              # health must route hosted, never hang the run on the fleet.
+              echo "::warning::Actions queue unreadable; routing onto hosted runners."
+              echo "runner=$hosted" >> "$GITHUB_OUTPUT"
+              exit 0
+            }
           if [ -z "$oldest" ]; then
             echo "Queue empty; organisation runners take this run."
             echo "runner=$fleet" >> "$GITHUB_OUTPUT"
