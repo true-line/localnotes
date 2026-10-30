@@ -54,6 +54,10 @@ jobs:
       - name: Mint the chores-dumb census token
         id: chores
         if: env.HAS_CHORES == 'true'
+        # The census is optional: a failed mint (key rotation, suspended App
+        # installation, auth API outage) must degrade to the queue signal,
+        # not fail the route job and with it the whole run.
+        continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ secrets.chores_client_id }}
@@ -65,6 +69,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CENSUS_TOKEN: ${{ steps.chores.outputs.token }}
           HAS_CENSUS_TOKEN: ${{ steps.chores.outputs.token != '' }}
+          MINT_FAILED: ${{ steps.chores.outcome == 'failure' }}
           EVENT_NAME: ${{ github.event_name }}
           IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork || false }}
           FALLBACK_MINUTES: ${{ vars.CI_RUNNER_FALLBACK_MINUTES || 10 }}
@@ -102,7 +107,11 @@ jobs:
               echo "::warning::Fleet census unreadable (${reason}); relying on the queue signal."
             fi
           else
-            echo 'No census credentials; relying on the queue signal.'
+            if [ "$MINT_FAILED" = true ]; then
+              echo "::warning::Census token mint failed; relying on the queue signal."
+            else
+              echo 'No census credentials; relying on the queue signal.'
+            fi
           fi
 
           oldest=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100" \
