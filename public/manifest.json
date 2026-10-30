@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LocalNotes",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A local-first notes app — notes live in your browser, never in the cloud.",
   "chrome_url_overrides": {
     "newtab": "index.html"
