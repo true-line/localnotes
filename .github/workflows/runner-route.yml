@@ -37,8 +37,13 @@ on:
         description: Chores-dumb App private key, for the fleet runner census
         required: false
 
+# contents: read backs the shallow checkout that provides the routing
+# script; actions: read backs the queue read. In a reusable workflow this
+# block replaces the caller's token permissions, so both must be listed:
+# with actions alone, the checkout's fetch fails with repository not found.
 permissions:
   actions: read
+  contents: read
 
 jobs:
   probe:
