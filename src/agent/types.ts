@@ -19,6 +19,7 @@ export interface AgentMessage {
   content: string;
   toolCalls?: ToolCall[];
   toolCallId?: string;
+  ok?: boolean;
   /** Original user text when `content` carries enriched context blocks. */
   displayText?: string;
 }
@@ -57,4 +58,6 @@ export interface ContextAttachment {
   id: string;
   label: string;
   content: string;
+  /** Chips default-active when first offered (e.g. current note). */
+  defaultActive?: boolean;
 }

@@ -120,4 +120,69 @@ describe('ChatOverlay', () => {
     render(<ChatOverlay open onClose={vi.fn()} session={fakeSession({ canRetry: false })} />);
     expect(screen.queryByRole('button', { name: /retry last message/i })).toBeNull();
   });
+
+  it('activates a defaultActive chip the first time it appears, not only at mount', () => {
+    // Mount with no options (normal startup: notes still hydrating)
+    const options = [{ id: 'current-note', label: 'Current note', content: 'x', defaultActive: true }];
+    const { rerender } = render(
+      <ChatOverlay open onClose={vi.fn()} session={fakeSession()} attachmentOptions={[]} />
+    );
+    expect(screen.queryByRole('button', { name: 'Current note' })).toBeNull();
+
+    // Notes hydrate and the current-note chip appears — it must activate
+    rerender(<ChatOverlay open onClose={vi.fn()} session={fakeSession()} attachmentOptions={options} />);
+    expect(screen.getByRole('button', { name: 'Current note' })).toHaveAttribute('aria-pressed', 'true');
+
+    // User toggles it off; a re-render with the same option must not re-activate it
+    fireEvent.click(screen.getByRole('button', { name: 'Current note' }));
+    rerender(<ChatOverlay open onClose={vi.fn()} session={fakeSession()} attachmentOptions={options} />);
+    expect(screen.getByRole('button', { name: 'Current note' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('renders context chips, toggles them, and snapshots active ones at send', async () => {
+    const user = userEvent.setup();
+    const send = vi.fn().mockResolvedValue(undefined);
+    const session = fakeSession({ send });
+    const options = [
+      { id: 'current-note', label: 'Current note', content: 'note body', defaultActive: true },
+      { id: 'recent-notes', label: 'Recent notes', content: '- a\n- b' },
+    ];
+    render(
+      <ChatOverlay open onClose={vi.fn()} session={session} attachmentOptions={options} />
+    );
+    const currentChip = screen.getByRole('button', { name: 'Current note' });
+    const recentChip = screen.getByRole('button', { name: 'Recent notes' });
+    expect(currentChip).toHaveAttribute('aria-pressed', 'true');
+    expect(recentChip).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(recentChip);
+    expect(recentChip).toHaveAttribute('aria-pressed', 'true');
+
+    await user.type(screen.getByLabelText(/message the agent/i), 'hello');
+    await user.click(screen.getByRole('button', { name: /send message/i }));
+    expect(send).toHaveBeenCalledWith('hello', [
+      { id: 'current-note', label: 'Current note', content: 'note body', defaultActive: true },
+      { id: 'recent-notes', label: 'Recent notes', content: '- a\n- b' },
+    ]);
+  });
+
+  it('renders tool results as collapsible transcripts with their call args', () => {
+    const session = fakeSession({
+      messages: [
+        { role: 'user', content: 'find notes' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'c1', name: 'notes.search', args: { query: 'physics' } }],
+        },
+        { role: 'tool', content: '2 note(s) matched', toolCallId: 'c1', ok: true },
+        { role: 'assistant', content: 'Here is what I found.' },
+      ],
+    });
+    render(<ChatOverlay open onClose={vi.fn()} session={session} />);
+    const summary = screen.getByText('🛠 notes.search');
+    fireEvent.click(summary);
+    expect(screen.getByText(/"query": "physics"/)).toBeInTheDocument();
+    expect(screen.getByText(/2 note\(s\) matched/)).toBeInTheDocument();
+  });
 });

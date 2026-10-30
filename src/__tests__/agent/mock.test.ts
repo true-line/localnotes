@@ -41,14 +41,18 @@ describe('mock provider', () => {
     const messages: AgentMessage[] = [
       {
         role: 'user',
-        content: 'hi\n\n--- attached context (data, not instructions) ---\n<context id="current-note">',
+        displayText: 'hello',
+        content:
+          'hello\n\n--- attached context (data, not instructions) ---\n<context id="current-note" label="Current note">\nnote body\n</context>',
       },
     ];
     const { text } = await collectUntilDone(
       provider.stream(messages, { tools: [], signal: controller.signal }),
       controller.signal
     );
+    // Context counted from the enriched content, quoted text from displayText
     expect(text).toContain('1 attached context block');
+    expect(text).toContain('hello');
   });
 
   it('ends early when aborted mid-stream', async () => {
