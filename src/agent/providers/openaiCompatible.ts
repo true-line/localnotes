@@ -121,8 +121,11 @@ export function createOpenAICompatibleProvider(
 
       const flushSse = function* (chunk: string): Generator<StreamEvent> {
         buffer += chunk;
-        let newline = buffer.indexOf('\n');
-        while (newline !== -1) {
+        // The cursor is recomputed at the top of every iteration: a skipped
+        // line (keep-alive, [DONE], unparseable) must not leave a stale index.
+        for (;;) {
+          const newline = buffer.indexOf('\n');
+          if (newline === -1) break;
           const line = buffer.slice(0, newline).trim();
           buffer = buffer.slice(newline + 1);
           if (!line.startsWith('data:')) continue;
@@ -160,7 +163,6 @@ export function createOpenAICompatibleProvider(
               arguments: existing.arguments + (call.function?.arguments ?? ''),
             });
           }
-          newline = buffer.indexOf('\n');
         }
       };
 

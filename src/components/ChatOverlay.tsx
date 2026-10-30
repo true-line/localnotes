@@ -86,6 +86,15 @@ export function ChatOverlay({
     });
   };
 
+  // A selector change is a settings change too: session state alone would be
+  // lost on reload, silently reselecting the previously persisted provider.
+  const changeProvider = (id: string) => {
+    session.setProviderId(id);
+    if (id !== settings.providerId) {
+      onSettingsChange?.({ ...settings, providerId: id });
+    }
+  };
+
   useEffect(() => {
     setActiveIds((prev) => {
       const next = new Set(prev);
@@ -164,7 +173,7 @@ export function ChatOverlay({
             className="agent-chat__selector"
             aria-label="Agent"
             value={session.providerId}
-            onChange={(e) => session.setProviderId(e.target.value)}
+            onChange={(e) => changeProvider(e.target.value)}
           >
             {session.providers.map((provider) => (
               <option key={provider.id} value={provider.id}>

@@ -23,15 +23,7 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "optional_host_permissions": [
-    {
-      "matches": [
-        "http://*/*"
-      ]
-    },
-    {
-      "matches": [
-        "https://*/*"
-      ]
-    }
+    "http://*/*",
+    "https://*/*"
   ]
 }

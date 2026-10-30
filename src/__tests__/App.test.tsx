@@ -291,11 +291,14 @@ describe('App integration', () => {
     await user.click(screen.getByRole('button', { name: /send message/i }));
 
     // The mock emits a real tool-call; the runtime executes it against the
-    // vault and the transcript shows the tool entry with the live result.
+    // vault and the transcript shows the tool entry with the live result,
+    // then the mock answers from that result.
     expect(await screen.findByText('🛠 notes.search')).toBeInTheDocument();
     fireEvent.click(screen.getByText('🛠 notes.search'));
     expect(await screen.findByText(/"query": "spacetime"/)).toBeInTheDocument();
-    expect(await screen.findByText(/1 note\(s\) matched/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/1 note\(s\) matched/, { selector: 'pre' })
+    ).toBeInTheDocument();
   }, 15_000);
 
   it('shows the Current note chip as active and clears stale selection on note switch', async () => {

@@ -53,6 +53,30 @@ describe('openaiCompatible provider', () => {
     expect(init.body).not.toContain('"tools"');
   });
 
+  it('advances past keep-alive lines and [DONE] without stalling', async () => {
+    // Comment lines, non-data lines, and [DONE] must not leave the SSE
+    // cursor stale: earlier code looped forever once such a line appeared.
+    const stream =
+      'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n' +
+      ': keep-alive\n\n' +
+      'event: ping\ndata: not-json\n\n' +
+      'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n' +
+      'data: [DONE]\n\n';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(stream));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createOpenAICompatibleProvider(() => CONFIG);
+    const events = await collect(provider.stream([userMsg], {
+      tools: [],
+      signal: new AbortController().signal,
+    }));
+
+    expect(events).toEqual([
+      { type: 'text-delta', delta: 'Hel' },
+      { type: 'text-delta', delta: 'lo' },
+    ]);
+  });
+
   it('accumulates streamed tool_calls and emits them as calls', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       sseResponse([

@@ -44,7 +44,11 @@ describe('AgentRuntime tool loop', () => {
     expect(round).toBe(2);
     const roles = runtime.getMessages().map((m) => m.role);
     expect(roles).toEqual(['user', 'assistant', 'tool', 'assistant']);
-    // Round 2's request snapshot contained the tool result
+    // Requests end with the last real entry — never the empty continuation
+    // placeholder (strict endpoints reject an assistant message with neither
+    // content nor tool_calls).
+    expect(requests[0].map((m) => m.role)).toEqual(['user']);
+    expect(requests[1].map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
     const toolMessageInRequest = requests[1].find(
       (m) => m.role === 'tool' && m.content === '1 result: spacetime'
     );

@@ -49,7 +49,20 @@ export function createMockProvider(): AgentProvider {
       const text = lastUser?.displayText ?? lastUser?.content ?? '';
       const contextCount = (lastUser?.content.match(/<context /g) ?? []).length;
       const match = SEARCH_RE.exec(text);
+      // A model emits the search call once; the follow-up round answers from
+      // the tool result instead of searching the same query again.
+      const searchResult = [...messages]
+        .reverse()
+        .find((m) => m.role === 'tool' && m.toolCallId === 'mock-call-1');
       if (match && tools.some((t) => t.name === 'notes.search')) {
+        if (searchResult) {
+          if (signal.aborted) return;
+          yield {
+            type: 'text-delta',
+            delta: `From your vault: ${searchResult.content}`,
+          };
+          return;
+        }
         yield {
           type: 'tool-call',
           call: { id: 'mock-call-1', name: 'notes.search', args: { query: match[1].trim() } },

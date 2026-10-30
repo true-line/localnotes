@@ -30,6 +30,19 @@ export function escapeContextText(text: string): string {
  * are executed here — against the tools handed to `run()` — and the result is
  * both appended as a tool message and yielded, so UI and transcript agree.
  */
+/**
+ * An empty trailing assistant entry is streaming bookkeeping for the UI, not
+ * transcript: a strict OpenAI-compatible endpoint rejects an assistant
+ * message with neither content nor tool_calls, so it never goes on the wire.
+ */
+function isPlaceholder(message: AgentMessage): boolean {
+  return (
+    message.role === 'assistant' &&
+    message.content === '' &&
+    !message.toolCalls?.length
+  );
+}
+
 export class AgentRuntime {
   private messages: AgentMessage[] = [];
   private controller: AbortController | null = null;
@@ -110,7 +123,16 @@ export class AgentRuntime {
       let round = 0;
       while (true) {
         let requestedTools = false;
+        // The wire transcript ends with the last real entry: after a tool
+        // result the next request must end with that result, not with the
+        // freshly created (still empty) continuation assistant.
         const snapshot = [...this.messages];
+        while (
+          snapshot.length > 0 &&
+          isPlaceholder(snapshot[snapshot.length - 1])
+        ) {
+          snapshot.pop();
+        }
         for await (const event of provider.stream(snapshot, {
           tools,
           signal: controller.signal,
@@ -166,13 +188,7 @@ export class AgentRuntime {
       this.controller = null;
       // A stopped turn leaves no trailing blank reply.
       const last = this.messages[this.messages.length - 1];
-      if (
-        reason === 'stop' &&
-        last &&
-        last.role === 'assistant' &&
-        last.content === '' &&
-        !last.toolCalls?.length
-      ) {
+      if (reason === 'stop' && last && isPlaceholder(last)) {
         this.messages.pop();
       }
     }
