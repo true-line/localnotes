@@ -1,7 +1,7 @@
 {
   "name": "localnotes",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "check:agent-context": "node scripts/check-agent-context.mjs",
