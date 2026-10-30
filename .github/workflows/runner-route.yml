@@ -1,13 +1,24 @@
 # Fleet-health probe shared by CI and Release. It answers one question before
 # any job lands on the organisation's hardware: are the self-hosted runners
-# taking work right now? A healthy fleet drains its queue in seconds to a few
-# minutes, so the oldest still-queued workflow run is the cheapest observable.
-# When that run has waited longer than CI_RUNNER_FALLBACK_MINUTES (repository
-# variable, default 10), every job in the calling run is routed onto hosted
-# runners instead — a dead fleet must not stop the reviewed lifecycle. The
-# probe itself always runs hosted, checks out no repository code, and only
-# reads the Actions queue with the run's own read-only token. An unreadable
-# queue also routes hosted: unknown fleet health must not hang the run.
+# taking work right now? Two independent signals feed the decision:
+#
+#   1. Fleet census. With the chores-dumb credentials passed by the caller,
+#      the probe counts online runners carrying the fleet's labels through
+#      the org runner API. Zero online fleet runners routes hosted, which
+#      covers a dead fleet at dispatch even when the queue is empty — the
+#      probe cannot see this run's own jobs, which have not queued yet. If
+#      the census itself fails, the queue signal below still stands: a
+#      census failure only removes the extra check, it does not poison the
+#      queue evidence.
+#   2. Queue age. A healthy fleet drains the shared queue in seconds to a
+#      few minutes, so the oldest still-queued workflow run is the cheapest
+#      observable for a wedged-but-online fleet, which the census cannot
+#      see. When that run has waited longer than CI_RUNNER_FALLBACK_MINUTES
+#      (repository variable, default 10), the run routes hosted.
+#
+# An unreadable queue also routes hosted: unknown fleet health must not
+# hang the run. The probe itself always runs hosted, checks out no
+# repository code, and only reads the Actions API.
 name: Runner route
 
 on:
@@ -16,6 +27,13 @@ on:
       runner:
         description: JSON array of runs-on labels for the calling run's jobs
         value: ${{ jobs.probe.outputs.runner }}
+    secrets:
+      chores_client_id:
+        description: Chores-dumb App client id, for the fleet runner census
+        required: false
+      chores_private_key:
+        description: Chores-dumb App private key, for the fleet runner census
+        required: false
 
 permissions:
   actions: read
@@ -25,13 +43,33 @@ jobs:
     name: Probe runner fleet
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The secrets context is unavailable in step-level if expressions; the
+    # presence check renders into job env instead, the same pattern the
+    # Version cut and Release workflows use for their chores-dumb steps.
+    env:
+      HAS_CHORES: ${{ secrets.chores_client_id != '' && secrets.chores_private_key != '' }}
     outputs:
       runner: ${{ steps.route.outputs.runner }}
     steps:
+      - name: Mint the chores-dumb census token
+        id: chores
+        if: env.HAS_CHORES == 'true'
+        # The census is optional: a failed mint (key rotation, suspended App
+        # installation, auth API outage) must degrade to the queue signal,
+        # not fail the route job and with it the whole run.
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.chores_client_id }}
+          private-key: ${{ secrets.chores_private_key }}
+
       - name: Route onto a live runner pool
         id: route
         env:
           GH_TOKEN: ${{ github.token }}
+          CENSUS_TOKEN: ${{ steps.chores.outputs.token }}
+          HAS_CENSUS_TOKEN: ${{ steps.chores.outputs.token != '' }}
+          MINT_FAILED: ${{ steps.chores.outcome == 'failure' }}
           EVENT_NAME: ${{ github.event_name }}
           IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork || false }}
           FALLBACK_MINUTES: ${{ vars.CI_RUNNER_FALLBACK_MINUTES || 10 }}
@@ -39,28 +77,54 @@ jobs:
           set -euo pipefail
           hosted='["ubuntu-latest"]'
           fleet='["self-hosted", "Linux", "X64"]'
+          route_hosted() {
+            echo "runner=$hosted" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
 
           if [ "$EVENT_NAME" = merge_group ] || [ "$IS_FORK" = true ]; then
             # Untrusted events never run on organisation hardware.
             echo "Untrusted event; hosted runners."
-            echo "runner=$hosted" >> "$GITHUB_OUTPUT"
-            exit 0
+            route_hosted
           fi
 
           FALLBACK_MINUTES=$(printf '%s' "$FALLBACK_MINUTES" | tr -d ' ')
           case "$FALLBACK_MINUTES" in '' | *[!0-9]*) FALLBACK_MINUTES=10 ;; esac
 
+          if [ "$HAS_CENSUS_TOKEN" = true ]; then
+            org="${GITHUB_REPOSITORY%%/*}"
+            online=$(GH_TOKEN="$CENSUS_TOKEN" gh api "/orgs/$org/actions/runners?per_page=100" \
+              --jq '[.runners[] | select(.status == "online" and any(.labels[]; .name == "self-hosted") and any(.labels[]; .name == "Linux") and any(.labels[]; .name == "X64"))] | length' \
+              2>"$RUNNER_TEMP/census.err") || online=''
+            if [ -n "$online" ]; then
+              echo "Fleet census: $online online runner(s) with the fleet labels."
+              if [ "$online" -eq 0 ]; then
+                echo "::warning::No online self-hosted runner; routing onto hosted runners."
+                route_hosted
+              fi
+            else
+              reason=$(tr '\n' ' ' < "$RUNNER_TEMP/census.err" | cut -c1-160)
+              echo "::warning::Fleet census unreadable (${reason}); relying on the queue signal."
+            fi
+          else
+            if [ "$MINT_FAILED" = true ]; then
+              echo "::warning::Census token mint failed; relying on the queue signal."
+            else
+              echo 'No census credentials; relying on the queue signal.'
+            fi
+          fi
+
           oldest=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100" \
-            --jq 'min_by(.created_at) | .created_at // empty' 2>/dev/null) ||
+            --jq '[.workflow_runs[] | .created_at] | min // empty' 2>"$RUNNER_TEMP/queue-read.err") ||
             {
               # A failed queue read is not an empty queue: unknown fleet
               # health must route hosted, never hang the run on the fleet.
-              echo "::warning::Actions queue unreadable; routing onto hosted runners."
-              echo "runner=$hosted" >> "$GITHUB_OUTPUT"
-              exit 0
+              reason=$(tr '\n' ' ' < "$RUNNER_TEMP/queue-read.err" | cut -c1-160)
+              echo "::warning::Actions queue unreadable (${reason}); routing onto hosted runners."
+              route_hosted
             }
           if [ -z "$oldest" ]; then
-            echo "Queue empty; organisation runners take this run."
+            echo "Queue empty and the fleet census is healthy; organisation runners take this run."
             echo "runner=$fleet" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -69,7 +133,7 @@ jobs:
           echo "Oldest queued run is ${age_minutes}m old (fallback after ${FALLBACK_MINUTES}m)."
           if [ "$age_minutes" -ge "$FALLBACK_MINUTES" ]; then
             echo "::warning::Self-hosted queue stalled for ${age_minutes}m; routing onto hosted runners."
-            echo "runner=$hosted" >> "$GITHUB_OUTPUT"
+            route_hosted
           else
             echo "runner=$fleet" >> "$GITHUB_OUTPUT"
           fi

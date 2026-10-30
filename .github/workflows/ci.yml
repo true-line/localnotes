@@ -45,6 +45,9 @@ jobs:
     name: Route onto a live runner pool
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     uses: ./.github/workflows/runner-route.yml
+    secrets:
+      chores_client_id: ${{ secrets.CHORES_DUMB_CLIENT_ID }}
+      chores_private_key: ${{ secrets.CHORES_DUMB_PRIVATE_KEY }}
   policy:
     name: Action Policy
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
