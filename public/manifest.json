@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LocalNotes",
-  "version": "0.3.0",
-  "description": "A local-first notes app \u2014 notes live in your browser, never in the cloud.",
+  "version": "0.4.0",
+  "description": "A local-first notes app — notes live in your browser, never in the cloud.",
   "chrome_url_overrides": {
     "newtab": "index.html"
   },
@@ -17,7 +17,7 @@
       "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
     },
-    "default_title": "LocalNotes \u2014 open a new tab"
+    "default_title": "LocalNotes — open a new tab"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
