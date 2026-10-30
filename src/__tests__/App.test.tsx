@@ -279,6 +279,52 @@ describe('App integration', () => {
     expect(screen.getByRole('combobox')).toHaveValue('still searching');
   });
 
+  it('runs a real vault search through the mock agent tool-call', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Spacetime Notes');
+    await user.type(screen.getByLabelText(/note content/i), 'curved spacetime');
+
+    await user.keyboard('{Meta>}j{/Meta}');
+    await user.type(screen.getByLabelText(/message the agent/i), 'find spacetime');
+    await user.click(screen.getByRole('button', { name: /send message/i }));
+
+    // The mock emits a real tool-call; the runtime executes it against the
+    // vault and the transcript shows the tool entry with the live result.
+    expect(await screen.findByText('🛠 notes.search')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('🛠 notes.search'));
+    expect(await screen.findByText(/"query": "spacetime"/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 note\(s\) matched/)).toBeInTheDocument();
+  }, 15_000);
+
+  it('shows the Current note chip as active and clears stale selection on note switch', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'First Note');
+    await user.type(screen.getByLabelText(/note content/i), 'selectable words here');
+
+    // Select some text in the content area
+    const content = screen.getByLabelText(/note content/i);
+    fireEvent.select(content, { target: { selectionStart: 0, selectionEnd: 9 } });
+
+    await user.keyboard('{Meta>}j{/Meta}');
+    const selectionChip = await screen.findByRole('button', { name: 'Selection' });
+    expect(selectionChip).toHaveAttribute('aria-pressed', 'true');
+
+    // Switch to a second note: the Selection chip must disappear (stale)
+    await user.click(screen.getByRole('button', { name: /new note \(cmd\+n\)/i }));
+    await user.type(screen.getByLabelText(/note title/i), 'Second Note');
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Selection' })).toBeNull()
+    );
+    // And the current-note chip now points at the second note
+    const currentChip = screen.getByRole('button', { name: 'Current note' });
+    expect(currentChip).toHaveAttribute('aria-pressed', 'true');
+    expect(currentChip).toHaveAttribute('title', expect.stringContaining('Second Note'));
+  }, 15_000);
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);

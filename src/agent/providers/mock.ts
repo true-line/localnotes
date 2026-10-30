@@ -13,8 +13,7 @@ function chunkReply(text: string): string[] {
   return chunks;
 }
 
-function buildReply(lastUserTurn: string): string {
-  const contextCount = (lastUserTurn.match(/<context /g) ?? []).length;
+function buildReply(lastUserTurn: string, contextCount: number): string {
   const quoted =
     lastUserTurn.length > 120 ? `${lastUserTurn.slice(0, 120)}…` : lastUserTurn;
   return [
@@ -24,14 +23,17 @@ function buildReply(lastUserTurn: string): string {
     contextCount > 0
       ? `I can see ${contextCount} attached context block${contextCount === 1 ? '' : 's'}; when a real provider is configured (M4), that content is exactly what it would receive.`
       : 'No context is attached; use the chips above the composer to attach notes.',
-    'Read-only note tools arrive in the next milestone slice.',
   ].join('\n\n');
 }
 
+const SEARCH_RE = /(?:^|\s)(?:find|search(?:\s+for)?|look\s+up)\s+(.+)/i;
+
 /**
- * Deterministic offline provider: streams a canned reply in small chunks so
- * the drawer's streaming, stop, and retry paths can be exercised with zero
- * keys and zero network. It never emits `done` — the runtime owns it.
+ * Deterministic offline provider: streams canned replies in small chunks so
+ * the drawer's streaming, stop, and retry paths work with zero keys and zero
+ * network. Fake model, real data — when the user's message looks like a
+ * search, it emits a genuine notes.search tool-call that the runtime executes
+ * against the vault; the tool result shown in the transcript is real.
  */
 export function createMockProvider(): AgentProvider {
   return {
@@ -40,9 +42,26 @@ export function createMockProvider(): AgentProvider {
     description:
       'Deterministic offline assistant. Canned replies; useful for testing the chat experience without a provider.',
     localOnly: true,
-    async *stream(messages, { signal }): AsyncGenerator<StreamEvent> {
+    async *stream(messages, { tools, signal }): AsyncGenerator<StreamEvent> {
       const lastUser = [...messages].reverse().find((m) => m.role === 'user');
-      const reply = buildReply(lastUser?.content ?? '');
+      // Context blocks live in the enriched `content`; the user's own words
+      // are in `displayText`.
+      const text = lastUser?.displayText ?? lastUser?.content ?? '';
+      const contextCount = (lastUser?.content.match(/<context /g) ?? []).length;
+      const match = SEARCH_RE.exec(text);
+      if (match && tools.some((t) => t.name === 'notes.search')) {
+        yield {
+          type: 'tool-call',
+          call: { id: 'mock-call-1', name: 'notes.search', args: { query: match[1].trim() } },
+        };
+        if (signal.aborted) return;
+        yield {
+          type: 'text-delta',
+          delta: 'I ran a real search against your vault — the result is in the tool entry above.',
+        };
+        return;
+      }
+      const reply = buildReply(text, contextCount);
       for (const chunk of chunkReply(reply)) {
         if (signal.aborted) return;
         await delay(CHUNK_DELAY_MS);

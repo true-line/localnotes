@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ContextAttachment } from '../agent/types';
 import type { AgentSession } from '../agent/useAgentSession';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import '../styles/ChatOverlay.css';
@@ -7,6 +8,8 @@ interface Props {
   open: boolean;
   onClose: () => void;
   session: AgentSession;
+  /** Available context chips; active ones snapshot into the sent message. */
+  attachmentOptions?: ContextAttachment[];
   /** Wikilinks inside assistant replies navigate like editor wikilinks. */
   onWikiLinkClick?: (target: string) => void;
   onTagClick?: (tag: string) => void;
@@ -16,10 +19,17 @@ export function ChatOverlay({
   open,
   onClose,
   session,
+  attachmentOptions = [],
   onWikiLinkClick,
   onTagClick,
 }: Props) {
   const [draft, setDraft] = useState('');
+  const [activeIds, setActiveIds] = useState<Set<string>>(new Set());
+  // Chips the user has already decided about (toggled) or that were offered:
+  // defaultActive applies exactly once per chip, the first time it appears —
+  // later appearances (notes hydrating, note switching) must not fight the
+  // user's explicit toggle-off.
+  const decidedIdsRef = useRef<Set<string>>(new Set());
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
@@ -27,6 +37,40 @@ export function ChatOverlay({
   const activeProvider =
     session.providers.find((p) => p.id === session.providerId) ??
     session.providers[0];
+
+  useEffect(() => {
+    setActiveIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const option of attachmentOptions) {
+        const firstAppearance = !decidedIdsRef.current.has(option.id);
+        decidedIdsRef.current.add(option.id);
+        if (firstAppearance && option.defaultActive && !next.has(option.id)) {
+          next.add(option.id);
+          changed = true;
+        }
+      }
+      // Drop ids that no longer exist (e.g. Selection when deselected)
+      const valid = new Set(attachmentOptions.map((a) => a.id));
+      for (const id of [...next]) {
+        if (!valid.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [attachmentOptions]);
+
+  const toggleChip = (id: string) => {
+    decidedIdsRef.current.add(id);
+    setActiveIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (open) {
@@ -51,8 +95,9 @@ export function ChatOverlay({
   const send = () => {
     if (!canSend) return;
     const text = draft;
+    const attachments = attachmentOptions.filter((a) => activeIds.has(a.id));
     setDraft('');
-    void session.send(text, []);
+    void session.send(text, attachments);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -152,10 +197,29 @@ export function ChatOverlay({
               );
             }
             if (message.role === 'tool') {
+              // Pair the result with its originating call (name + args)
+              const call = session.messages
+                .slice(0, index)
+                .reverse()
+                .find(
+                  (m) =>
+                    m.role === 'assistant' &&
+                    m.toolCalls?.some((c) => c.id === message.toolCallId)
+                )
+                ?.toolCalls?.find((c) => c.id === message.toolCallId);
               return (
-                <div className="agent-chat__msg agent-chat__msg--tool" key={index}>
-                  {message.content}
-                </div>
+                <details className="agent-chat__tool" key={index}>
+                  <summary>
+                    🛠 {call ? call.name : 'tool'}
+                    {message.ok === false ? ' — failed' : ''}
+                  </summary>
+                  {call && (
+                    <pre className="agent-chat__tool-args">
+                      {JSON.stringify(call.args, null, 2)}
+                    </pre>
+                  )}
+                  <pre className="agent-chat__tool-result">{message.content}</pre>
+                </details>
               );
             }
             return null;
@@ -168,6 +232,28 @@ export function ChatOverlay({
           {session.lastError}
         </p>
       )}
+
+      <div className="agent-chat__chips" aria-label="Context attachments">
+        {attachmentOptions.length === 0 ? (
+          <span className="agent-chat__chips-empty">No context available</span>
+        ) : (
+          attachmentOptions.map((option) => {
+            const active = activeIds.has(option.id);
+            return (
+              <button
+                key={option.id}
+                type="button"
+                className={`agent-chat__chip${active ? ' agent-chat__chip--active' : ''}`}
+                aria-pressed={active}
+                onClick={() => toggleChip(option.id)}
+                title={option.content.length > 300 ? `${option.content.slice(0, 300)}…` : option.content}
+              >
+                {option.label}
+              </button>
+            );
+          })
+        )}
+      </div>
 
       <div className="agent-chat__composer">
         <textarea
