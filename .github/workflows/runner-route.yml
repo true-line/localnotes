@@ -43,12 +43,17 @@ jobs:
     name: Probe runner fleet
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The secrets context is unavailable in step-level if expressions; the
+    # presence check renders into job env instead, the same pattern the
+    # Version cut and Release workflows use for their chores-dumb steps.
+    env:
+      HAS_CHORES: ${{ secrets.chores_client_id != '' && secrets.chores_private_key != '' }}
     outputs:
       runner: ${{ steps.route.outputs.runner }}
     steps:
       - name: Mint the chores-dumb census token
         id: chores
-        if: ${{ secrets.chores_client_id != '' && secrets.chores_private_key != '' }}
+        if: env.HAS_CHORES == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ secrets.chores_client_id }}
