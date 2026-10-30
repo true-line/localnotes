@@ -1,4 +1,5 @@
 import type { Note, NoteRevision } from './types';
+import type { AgentAuditEntry } from './agent/types';
 import {
   EMBEDDING_STORAGE_KEY,
   type EmbeddingCacheStore,
@@ -6,13 +7,17 @@ import {
 
 const LEGACY_NOTES_KEY = 'localnotes';
 const DB_NAME = 'localnotes';
-const DB_VERSION = 1;
+// v2 adds the agent_audit store (M4 slice 2). The upgrade handler creates
+// every missing store idempotently, so v1 databases upgrade in place.
+const DB_VERSION = 2;
 const LEGACY_MIGRATION_KEY = 'legacy-localstorage-migration';
 
 /** Revisions kept per note (oldest trimmed first). */
 export const REVISION_CAP_PER_NOTE = 20;
 /** A new revision snapshot is taken at most this often per note. */
 export const REVISION_MIN_INTERVAL_MS = 5 * 60 * 1000;
+/** Audit entries kept overall (oldest trimmed first). */
+export const AGENT_AUDIT_CAP = 500;
 
 export interface NotesRepository {
   getAllNotes(): Promise<Note[]>;
@@ -33,6 +38,11 @@ export interface NotesRepository {
   clearEmbeddings(): Promise<void>;
   getSetting<T>(key: string): Promise<T | undefined>;
   putSetting(key: string, value: unknown): Promise<void>;
+  /** Appends one agent action and trims the log to AGENT_AUDIT_CAP. */
+  appendAgentAudit(entry: Omit<AgentAuditEntry, 'seq'>): Promise<void>;
+  /** Newest-first audit entries, at most `limit` of them. */
+  listAgentAudit(limit: number): Promise<AgentAuditEntry[]>;
+  clearAgentAudit(): Promise<void>;
   /** Resolves once every queued write has been persisted. */
   flushWrites(): Promise<void>;
 }
@@ -70,6 +80,20 @@ function isNoteRevision(value: unknown): value is NoteRevision {
     typeof v.noteId === 'string' &&
     typeof v.at === 'number' &&
     isNote(v.snapshot)
+  );
+}
+
+function isAgentAuditEntry(value: unknown): value is AgentAuditEntry {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.at === 'string' &&
+    typeof v.providerId === 'string' &&
+    typeof v.tool === 'string' &&
+    typeof v.tier === 'number' &&
+    typeof v.ok === 'boolean' &&
+    typeof v.durationMs === 'number' &&
+    !!v.args && typeof v.args === 'object' && !Array.isArray(v.args)
   );
 }
 
@@ -131,6 +155,14 @@ function openDatabase(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('settings')) {
         db.createObjectStore('settings', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('agent_audit')) {
+        // Autoincrement gives monotonic sequence order: newest entry, highest
+        // key — the bounding trim and newest-first reads lean on that.
+        db.createObjectStore('agent_audit', {
+          keyPath: 'seq',
+          autoIncrement: true,
+        });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -448,6 +480,43 @@ async function openRepository(): Promise<NotesRepository> {
         const transaction = tx(['settings'], 'readwrite');
         const store = transaction.objectStore('settings');
         return requestToPromise(store.put({ key, value })).then(() =>
+          transactionToPromise(transaction)
+        );
+      });
+    },
+
+    appendAgentAudit(entry: Omit<AgentAuditEntry, 'seq'>) {
+      return queue.enqueue(() => {
+        const transaction = tx(['agent_audit'], 'readwrite');
+        const store = transaction.objectStore('agent_audit');
+        return (async () => {
+          await requestToPromise(store.put(entry));
+          // Bounded: autoincrement keys are monotonic, so the oldest entries
+          // are the lowest keys and the trim is a plain prefix delete.
+          const keys = (await requestToPromise(store.getAllKeys())) as IDBValidKey[];
+          const overflow = keys.length - AGENT_AUDIT_CAP;
+          for (let i = 0; i < overflow; i++) {
+            store.delete(keys[i]);
+          }
+          await transactionToPromise(transaction);
+        })();
+      });
+    },
+
+    async listAgentAudit(limit: number) {
+      const store = tx(['agent_audit'], 'readonly').objectStore('agent_audit');
+      const rows = (await requestToPromise(store.getAll())) as unknown[];
+      return rows
+        .filter(isAgentAuditEntry)
+        .slice(-Math.max(0, limit))
+        .reverse();
+    },
+
+    clearAgentAudit() {
+      return queue.enqueue(() => {
+        const transaction = tx(['agent_audit'], 'readwrite');
+        const store = transaction.objectStore('agent_audit');
+        return requestToPromise(store.clear()).then(() =>
           transactionToPromise(transaction)
         );
       });

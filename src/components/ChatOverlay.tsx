@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ContextAttachment } from '../agent/types';
+import type { AgentAuditEntry, ContextAttachment } from '../agent/types';
 import type { AgentSession } from '../agent/useAgentSession';
+import { clearAgentAudit, listAgentAudit } from '../agent/audit';
 import { DEFAULT_AGENT_SETTINGS, type AgentSettings } from '../agent/settings';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import '../styles/ChatOverlay.css';
@@ -31,6 +32,10 @@ export function ChatOverlay({
   const [draft, setDraft] = useState('');
   const [activeIds, setActiveIds] = useState<Set<string>>(new Set());
   const [remoteDraft, setRemoteDraft] = useState(settings.openai);
+  // Model ids offered as suggestions, fetched from the endpoint's /models.
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  // Null means "not loaded yet" — the log loads lazily when the panel opens.
+  const [auditEntries, setAuditEntries] = useState<AgentAuditEntry[] | null>(null);
   // Selected text from the agent-settings panel.
   const [permissionNote, setPermissionNote] = useState('');
   // Chips the user has already decided about (toggled) or that were offered:
@@ -46,6 +51,13 @@ export function ChatOverlay({
     session.providers.find((p) => p.id === session.providerId) ??
     session.providers[0];
   const isRemoteProvider = activeProvider?.id === 'openai';
+  const remoteHost = (() => {
+    try {
+      return new URL(settings.openai.baseUrl).host;
+    } catch {
+      return '';
+    }
+  })();
 
   // Sync the remote-settings draft when settings change externally.
   useEffect(() => {
@@ -84,6 +96,47 @@ export function ChatOverlay({
       providerId: 'openai',
       openai: { ...remoteDraft },
     });
+  };
+
+  // Offered when the settings panel opens; the field stays free-text because
+  // not every OpenAI-compatible endpoint implements /models.
+  const refreshModels = async () => {
+    try {
+      const url = `${remoteDraft.baseUrl.replace(/\/+$/, '')}/models`;
+      const response = await fetch(url, {
+        headers: remoteDraft.apiKey
+          ? { authorization: `Bearer ${remoteDraft.apiKey}` }
+          : {},
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      const data = (await response.json()) as {
+        data?: Array<{ id?: unknown }>;
+      };
+      setModelOptions(
+        (data.data ?? [])
+          .map((m) => m.id)
+          .filter((id): id is string => typeof id === 'string')
+      );
+    } catch {
+      setModelOptions([]);
+    }
+  };
+
+  const reloadAudit = async () => {
+    try {
+      setAuditEntries(await listAgentAudit(50));
+    } catch {
+      setAuditEntries([]);
+    }
+  };
+
+  const clearAudit = async () => {
+    try {
+      await clearAgentAudit();
+    } catch {
+      // ignore storage errors; the panel empties regardless
+    }
+    setAuditEntries([]);
   };
 
   // A selector change is a settings change too: session state alone would be
@@ -188,10 +241,14 @@ export function ChatOverlay({
             title={
               activeProvider?.localOnly
                 ? 'This agent runs locally; nothing leaves the device'
-                : 'This agent sends data to a remote endpoint'
+                : `Note content and context chips are sent to ${settings.openai.baseUrl}`
             }
           >
-            {activeProvider?.localOnly ? 'local' : 'remote'}
+            {activeProvider?.localOnly
+              ? 'local'
+              : remoteHost
+                ? `remote · ${remoteHost}`
+                : 'remote'}
           </span>
         </div>
         <div className="agent-chat__header-actions">
@@ -291,7 +348,12 @@ export function ChatOverlay({
       )}
 
       {isRemoteProvider && (
-        <details className="agent-chat__remote-settings">
+        <details
+          className="agent-chat__remote-settings"
+          onToggle={(e) => {
+            if ((e.target as HTMLDetailsElement).open) void refreshModels();
+          }}
+        >
           <summary>Remote provider settings</summary>
           <label className="agent-chat__field">
             <span>Base URL</span>
@@ -313,8 +375,16 @@ export function ChatOverlay({
                 setRemoteDraft({ ...remoteDraft, model: e.target.value })
               }
               placeholder="qwen3:30b-a3b"
+              list="agent-chat-models"
             />
           </label>
+          <datalist id="agent-chat-models">
+            {modelOptions.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </datalist>
           <label className="agent-chat__field">
             <span>API key (optional)</span>
             <input
@@ -353,6 +423,57 @@ export function ChatOverlay({
           )}
         </details>
       )}
+
+      <details
+        className="agent-chat__audit"
+        onToggle={(e) => {
+          if ((e.target as HTMLDetailsElement).open) void reloadAudit();
+        }}
+      >
+        <summary>Agent audit log</summary>
+        {auditEntries === null ? (
+          <p className="agent-chat__settings-note">Loading…</p>
+        ) : auditEntries.length === 0 ? (
+          <p className="agent-chat__settings-note">No agent actions recorded yet.</p>
+        ) : (
+          <ul className="agent-chat__audit-list">
+            {auditEntries.map((entry, index) => {
+              const args = JSON.stringify(entry.args);
+              return (
+                <li key={index} className="agent-chat__audit-row">
+                  <span className="agent-chat__audit-time">
+                    {new Date(entry.at).toLocaleTimeString()}
+                  </span>
+                  <span className="agent-chat__audit-provider">{entry.providerId}</span>
+                  <span
+                    className={`agent-chat__audit-tool${
+                      entry.ok ? '' : ' agent-chat__audit-tool--failed'
+                    }`}
+                  >
+                    {entry.tool}
+                    {entry.ok ? '' : ' — failed'}
+                  </span>
+                  <span
+                    className="agent-chat__audit-args"
+                    title={JSON.stringify(entry.args, null, 2)}
+                  >
+                    {args.length > 60 ? `${args.slice(0, 60)}…` : args}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <div className="agent-chat__settings-actions">
+          <button
+            type="button"
+            className="agent-chat__chip"
+            onClick={() => void clearAudit()}
+          >
+            Clear log
+          </button>
+        </div>
+      </details>
 
       <div className="agent-chat__chips" aria-label="Context attachments">
         {attachmentOptions.length === 0 ? (

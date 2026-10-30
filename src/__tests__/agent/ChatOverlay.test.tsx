@@ -1,9 +1,22 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChatOverlay } from '../../components/ChatOverlay';
 import { DEFAULT_AGENT_SETTINGS } from '../../agent/settings';
+import { clearAgentAudit, listAgentAudit } from '../../agent/audit';
 import type { AgentSession } from '../../agent/useAgentSession';
+import type { AgentProvider } from '../../agent/types';
+
+vi.mock('../../agent/audit', () => ({
+  listAgentAudit: vi.fn(),
+  clearAgentAudit: vi.fn(),
+}));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.mocked(listAgentAudit).mockReset();
+  vi.mocked(clearAgentAudit).mockReset();
+});
 
 function fakeSession(overrides: Partial<AgentSession> = {}): AgentSession {
   const base: AgentSession = {
@@ -214,5 +227,141 @@ describe('ChatOverlay', () => {
     fireEvent.click(summary);
     expect(screen.getByText(/"query": "physics"/)).toBeInTheDocument();
     expect(screen.getByText(/2 note\(s\) matched/)).toBeInTheDocument();
+  });
+
+  describe('audit log panel', () => {
+    const auditEntry = {
+      at: new Date('2026-01-01T12:34:56').toISOString(),
+      providerId: 'mock',
+      tool: 'notes.search',
+      tier: 0,
+      ok: true,
+      durationMs: 3,
+      args: { query: 'spacetime' },
+    };
+
+    it('loads entries when opened and shows failures distinctly', async () => {
+      vi.mocked(listAgentAudit).mockResolvedValue([
+        auditEntry,
+        { ...auditEntry, tool: 'notes.read', ok: false },
+      ]);
+      render(<ChatOverlay open onClose={vi.fn()} session={fakeSession()} />);
+      fireEvent.click(screen.getByText('Agent audit log'));
+      expect(await screen.findByText('notes.search')).toBeInTheDocument();
+      expect(screen.getByText(/notes\.read — failed/)).toBeInTheDocument();
+      expect(listAgentAudit).toHaveBeenCalledWith(50);
+    });
+
+    it('clears the log', async () => {
+      vi.mocked(listAgentAudit).mockResolvedValue([auditEntry]);
+      vi.mocked(clearAgentAudit).mockResolvedValue(undefined);
+      render(<ChatOverlay open onClose={vi.fn()} session={fakeSession()} />);
+      fireEvent.click(screen.getByText('Agent audit log'));
+      await screen.findByText('notes.search');
+      fireEvent.click(screen.getByRole('button', { name: 'Clear log' }));
+      expect(clearAgentAudit).toHaveBeenCalledTimes(1);
+      expect(await screen.findByText(/no agent actions recorded yet/i)).toBeInTheDocument();
+    });
+
+    it('says so when nothing has been recorded', async () => {
+      vi.mocked(listAgentAudit).mockResolvedValue([]);
+      render(<ChatOverlay open onClose={vi.fn()} session={fakeSession()} />);
+      fireEvent.click(screen.getByText('Agent audit log'));
+      expect(
+        await screen.findByText(/no agent actions recorded yet/i)
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe('remote provider affordances', () => {
+    const openaiProvider: AgentProvider = {
+      id: 'openai',
+      label: 'OpenAI-compatible (remote)',
+      description: '',
+      localOnly: false,
+      stream: function* () {} as unknown as AgentSession['providers'][0]['stream'],
+    };
+    const mockProvider: AgentProvider = {
+      id: 'mock',
+      label: 'Local Mock (offline)',
+      description: '',
+      localOnly: true,
+      stream: function* () {} as unknown as AgentSession['providers'][0]['stream'],
+    };
+
+    const remoteSession = () =>
+      fakeSession({
+        providers: [mockProvider, openaiProvider],
+        providerId: 'openai',
+      });
+
+    const remoteSettings = (baseUrl: string) => ({
+      ...DEFAULT_AGENT_SETTINGS,
+      providerId: 'openai',
+      openai: { baseUrl, model: 'qwen3:30b-a3b', apiKey: '' },
+    });
+
+    it('shows the endpoint host on the remote badge', () => {
+      render(
+        <ChatOverlay
+          open
+          onClose={vi.fn()}
+          session={remoteSession()}
+          settings={remoteSettings('http://ollama.local:11434/v1')}
+        />
+      );
+      expect(screen.getByText('remote · ollama.local:11434')).toHaveAttribute(
+        'title',
+        'Note content and context chips are sent to http://ollama.local:11434/v1'
+      );
+    });
+
+    it('offers model suggestions from the endpoint when settings open', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: 'qwen3:30b' }, { id: 'llama3' }] }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <ChatOverlay
+          open
+          onClose={vi.fn()}
+          session={remoteSession()}
+          settings={remoteSettings('http://localhost:11434/v1')}
+        />
+      );
+      fireEvent.click(screen.getByText('Remote provider settings'));
+      expect(await screen.findByText('qwen3:30b')).toBeInTheDocument();
+      expect(screen.getByText('llama3')).toBeInTheDocument();
+      expect(screen.getByLabelText('Model')).toHaveAttribute(
+        'list',
+        'agent-chat-models'
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:11434/v1/models',
+        expect.objectContaining({ headers: {} })
+      );
+    });
+
+    it('keeps the model field usable when the endpoint has no /models', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response('nope', { status: 404 }));
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <ChatOverlay
+          open
+          onClose={vi.fn()}
+          session={remoteSession()}
+          settings={remoteSettings('http://localhost:11434/v1')}
+        />
+      );
+      fireEvent.click(screen.getByText('Remote provider settings'));
+      // The datalist simply stays empty; the field remains free-text.
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(screen.getByLabelText('Model')).toBeInTheDocument();
+      expect(screen.queryByText('qwen3:30b')).toBeNull();
+    });
   });
 });

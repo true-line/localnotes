@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AgentRuntime, escapeContextText } from '../../agent/runtime';
 import type { AgentProvider, StreamEvent } from '../../agent/types';
 
@@ -30,6 +30,55 @@ async function collect(generator: AsyncGenerator<StreamEvent>): Promise<StreamEv
 }
 
 describe('AgentRuntime', () => {
+  it('records an audit entry per executed tool call', async () => {
+    const audit = vi.fn();
+    const runtime = new AgentRuntime({ audit });
+    let round = 0;
+    const provider: AgentProvider = {
+      id: 'test',
+      label: 'Test',
+      description: 'test provider',
+      localOnly: true,
+      async *stream() {
+        round += 1;
+        if (round === 1) {
+          yield { type: 'tool-call', call: { id: 'c1', name: 'notes.search', args: { query: 'x' } } };
+          yield { type: 'tool-call', call: { id: 'c2', name: 'unknown.tool', args: {} } };
+        } else {
+          yield { type: 'text-delta', delta: 'done' };
+        }
+      },
+    };
+    const tools = [
+      {
+        name: 'notes.search',
+        description: 'search',
+        inputSchema: { type: 'object' },
+        tier: 0 as const,
+        execute: async () => ({ ok: true, content: 'r' }),
+      },
+    ];
+    await collect(runtime.run({ text: 'go' }, provider, tools));
+
+    expect(audit).toHaveBeenCalledTimes(2);
+    const first = audit.mock.calls[0][0];
+    expect(first).toMatchObject({
+      providerId: 'test',
+      tool: 'notes.search',
+      tier: 0,
+      ok: true,
+      args: { query: 'x' },
+    });
+    expect(typeof first.at).toBe('string');
+    expect(first.durationMs).toBeGreaterThanOrEqual(0);
+    // Unknown tools are audited too, with a tier outside the ladder.
+    expect(audit.mock.calls[1][0]).toMatchObject({
+      tool: 'unknown.tool',
+      ok: false,
+      tier: -1,
+    });
+  });
+
   it('accumulates text deltas into an assistant message', async () => {
     const runtime = new AgentRuntime();
     const provider = providerFrom([
