@@ -106,7 +106,11 @@ describe('AgentRuntime', () => {
 
   it('streams post-tool text into a continuation assistant message after the result', async () => {
     const runtime = new AgentRuntime();
+    let requested = false;
     const provider = providerFrom(async function* () {
+      // Single pass: the loop's follow-up rounds must get no further calls
+      if (requested) return;
+      requested = true;
       yield { type: 'tool-call', call: { id: 'c1', name: 'notes.search', args: {} } };
       yield { type: 'text-delta', delta: 'post-tool reply' };
     });
