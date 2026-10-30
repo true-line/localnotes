@@ -1,9 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNotes } from './hooks/useNotes';
 import { useNoteEmbeddings } from './hooks/useNoteEmbeddings';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
 import { useAgentSession } from './agent/useAgentSession';
+import { createTools, type ToolContext } from './agent/tools';
+import { fuzzyScore } from './fuzzyMatch';
+import { getNoteConnections } from './knowledgeGraph';
+import type { ContextAttachment } from './agent/types';
 import { normalizeKey } from './knowledgeGraph';
 import { exportVault, importVault } from './storage';
 import { NoteList } from './components/NoteList';
@@ -36,13 +40,86 @@ export function App() {
   const { embeddings, embeddingStatus, reindexEmbeddings } =
     useNoteEmbeddings(notes);
   const { resolved: resolvedTheme, setTheme } = useTheme();
-  const session = useAgentSession();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [isGraphOpen, setIsGraphOpen] = useState(false);
   const [graphFocusNodeId, setGraphFocusNodeId] = useState<string | null>(null);
   const [dataStatus, setDataStatus] = useState<string | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [selectionText, setSelectionText] = useState('');
+
+  // Tier-0 read-only facade for agent tools: nothing here can mutate the vault.
+  const tools = useMemo(() => {
+    const ctx: ToolContext = {
+      searchNotes: (query, limit = 10) =>
+        notes
+          .map((note) => ({
+            note,
+            score: fuzzyScore(query, `${note.title}\n${note.content}`),
+          }))
+          .filter((entry) => entry.score >= 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, limit)
+          .map((entry) => entry.note),
+      getNote: (id) => notes.find((n) => n.id === id) ?? null,
+      recentNotes: (limit = 10) => notes.slice(0, limit),
+      connectionsFor: (id) =>
+        notes.some((n) => n.id === id)
+          ? getNoteConnections(id, notes, embeddings)
+          : null,
+      similarFor: (id, limit = 5) =>
+        notes.some((n) => n.id === id)
+          ? (getNoteConnections(id, notes, embeddings)?.semanticNotes.slice(0, limit) ?? [])
+          : [],
+    };
+    return createTools(ctx);
+  }, [notes, embeddings]);
+  const session = useAgentSession(tools);
+
+  // Explicit context chips: what the agent receives is decided here, shown
+  // in the drawer as removable pills, and never attached implicitly.
+  const attachmentOptions = useMemo<ContextAttachment[]>(() => {
+    const options: ContextAttachment[] = [];
+    if (selectedNote) {
+      options.push({
+        id: 'current-note',
+        label: 'Current note',
+        content: `${selectedNote.title || 'Untitled'}\n${selectedNote.content}`,
+        defaultActive: true,
+      });
+    }
+    if (selectionText.trim()) {
+      options.push({ id: 'selection', label: 'Selection', content: selectionText });
+    }
+    if (notes.length > 0) {
+      options.push({
+        id: 'recent-notes',
+        label: 'Recent notes',
+        content: notes
+          .slice(0, 5)
+          .map((n) => `- ${n.title || 'Untitled'}`)
+          .join('\n'),
+      });
+    }
+    if (selectedNote) {
+      const conn = getNoteConnections(selectedNote.id, notes, embeddings);
+      const bits = [
+        conn.backlinks.length &&
+          `backlinks: ${conn.backlinks.map((n) => n.title || 'Untitled').join(', ')}`,
+        conn.outgoingNotes.length &&
+          `links: ${conn.outgoingNotes.map((n) => n.title || 'Untitled').join(', ')}`,
+        conn.tags.length && `tags: ${conn.tags.join(', ')}`,
+      ].filter(Boolean);
+      if (bits.length) {
+        options.push({
+          id: 'graph-neighborhood',
+          label: 'Graph neighborhood',
+          content: bits.join('\n'),
+        });
+      }
+    }
+    return options;
+  }, [selectedNote, selectionText, notes, embeddings]);
 
   useEffect(() => {
     if (!dataStatus) return;
@@ -280,6 +357,7 @@ export function App() {
             onCreateConceptNote={handleCreateConceptNote}
             onOpenGraphNode={handleOpenGraphNode}
             onReindexEmbeddings={reindexEmbeddings}
+            onSelectionChange={setSelectionText}
           />
         ) : (
           <EmptyState onNewNote={handleNewNote} />
@@ -303,6 +381,7 @@ export function App() {
         open={isChatOpen}
         onClose={() => setIsChatOpen(false)}
         session={session}
+        attachmentOptions={attachmentOptions}
         onWikiLinkClick={handleChatWikiLinkClick}
       />
     </div>

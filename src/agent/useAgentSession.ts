@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { AgentRuntime } from '../agent/runtime';
 import { getProvider, getProviders } from '../agent/registry';
-import type { AgentMessage, ContextAttachment, StreamEvent } from '../agent/types';
+import type { AgentMessage, AgentTool, ContextAttachment, StreamEvent } from '../agent/types';
 
 export interface AgentSession {
   providers: ReturnType<typeof getProviders>;
@@ -19,7 +19,7 @@ export interface AgentSession {
   clear: () => void;
 }
 
-export function useAgentSession(initialProviderId?: string): AgentSession {
+export function useAgentSession(tools: AgentTool[] = [], initialProviderId?: string): AgentSession {
   const providers = getProviders();
   const fallback = providers[0]?.id ?? 'mock';
   const [providerId, setProviderIdState] = useState(
@@ -30,6 +30,8 @@ export function useAgentSession(initialProviderId?: string): AgentSession {
   const [lastError, setLastError] = useState<string | null>(null);
   const [hasLastInput, setHasLastInput] = useState(false);
   const runtimeRef = useRef(new AgentRuntime());
+  const toolsRef = useRef<AgentTool[]>(tools);
+  toolsRef.current = tools;
   const lastInputRef = useRef<{
     text: string;
     attachments: ContextAttachment[];
@@ -51,7 +53,11 @@ export function useAgentSession(initialProviderId?: string): AgentSession {
       setIsStreaming(true);
       const runtime = runtimeRef.current;
       try {
-        for await (const event of runtime.run({ text, attachments }, provider, [])) {
+        for await (const event of runtime.run(
+          { text, attachments },
+          provider,
+          toolsRef.current
+        )) {
           setMessages(runtime.getMessages());
           if (event.type === 'error') setLastError(event.error);
           if (event.type === 'done') break;

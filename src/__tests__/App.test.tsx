@@ -279,6 +279,25 @@ describe('App integration', () => {
     expect(screen.getByRole('combobox')).toHaveValue('still searching');
   });
 
+  it('runs a real vault search through the mock agent tool-call', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Spacetime Notes');
+    await user.type(screen.getByLabelText(/note content/i), 'curved spacetime');
+
+    await user.keyboard('{Meta>}j{/Meta}');
+    await user.type(screen.getByLabelText(/message the agent/i), 'find spacetime');
+    await user.click(screen.getByRole('button', { name: /send message/i }));
+
+    // The mock emits a real tool-call; the runtime executes it against the
+    // vault and the transcript shows the tool entry with the live result.
+    expect(await screen.findByText('🛠 notes.search')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('🛠 notes.search'));
+    expect(await screen.findByText(/"query": "spacetime"/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 note\(s\) matched/)).toBeInTheDocument();
+  }, 15_000);
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);

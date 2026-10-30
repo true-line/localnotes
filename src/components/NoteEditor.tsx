@@ -16,6 +16,8 @@ interface Props {
   onCreateConceptNote?: (title: string) => void;
   onOpenGraphNode?: (nodeId: string) => void;
   onReindexEmbeddings?: () => void;
+  /** Debounced report of the content-area text selection (for agent context). */
+  onSelectionChange?: (selectedText: string) => void;
 }
 
 export function NoteEditor({
@@ -29,11 +31,27 @@ export function NoteEditor({
   onCreateConceptNote,
   onOpenGraphNode,
   onReindexEmbeddings,
+  onSelectionChange,
 }: Props) {
   const titleRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const prevModeRef = useRef<'edit' | 'preview' | null>(null);
+  const selectionTimerRef = useRef<number | null>(null);
+
+  const reportSelection = useCallback(() => {
+    if (!onSelectionChange) return;
+    if (selectionTimerRef.current !== null) {
+      window.clearTimeout(selectionTimerRef.current);
+    }
+    selectionTimerRef.current = window.setTimeout(() => {
+      const area = contentRef.current;
+      if (!area) return;
+      const selected =
+        area.value.slice(area.selectionStart ?? 0, area.selectionEnd ?? 0);
+      onSelectionChange(selected);
+    }, 300);
+  }, [onSelectionChange]);
 
   useEffect(() => {
     if (titleRef.current && note.title === '') {
@@ -136,6 +154,8 @@ export function NoteEditor({
           aria-label="Note content"
           value={note.content}
           onChange={(e) => onUpdate(note.id, { content: e.target.value })}
+          onSelect={reportSelection}
+          onKeyUp={reportSelection}
         />
       ) : (
         <div className="note-editor__preview">

@@ -113,6 +113,41 @@ describe('AgentRuntime', () => {
     expect(result.result.content).toContain('unknown tool');
   });
 
+  it('validates tool args against the schema before execution', async () => {
+    const runtime = new AgentRuntime();
+    const provider = providerFrom([
+      { type: 'tool-call', call: { id: 'c3', name: 'evil.delete', args: { id: 1 } } },
+    ]);
+    const executed: unknown[] = [];
+    const tools = [
+      {
+        name: 'evil.delete',
+        description: 'delete by id',
+        inputSchema: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+          required: ['id'],
+          additionalProperties: false,
+        },
+        tier: 0 as const,
+        execute: async (args: Record<string, unknown>) => {
+          executed.push(args);
+          return { ok: true, content: 'deleted' };
+        },
+      },
+    ];
+    const events = await collect(runtime.run({ text: 'go' }, provider, tools));
+    const result = events.find((e) => e.type === 'tool-result') as Extract<
+      StreamEvent,
+      { type: 'tool-result' }
+    >;
+    // Wrong type (number instead of string) is rejected BEFORE execution
+    expect(executed).toHaveLength(0);
+    expect(result.result.ok).toBe(false);
+    expect(result.result.content).toContain('invalid arguments');
+    expect(result.result.content).toContain('expected string, got number');
+  });
+
   it('settles aborted turns with reason stop and drops the empty reply', async () => {
     const runtime = new AgentRuntime();
     const provider: AgentProvider = {
