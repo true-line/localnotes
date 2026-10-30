@@ -35,12 +35,21 @@ concurrency:
 # x86-64 runner, the MacOS group one arm64 runner. A fork's pull request and a
 # merge-queue run keep a hosted runner, because a pull request controls the
 # workflow file it runs and would otherwise execute its own code on the
-# organisation's hardware.
+# organisation's hardware. When the self-hosted queue has stalled longer than
+# CI_RUNNER_FALLBACK_MINUTES (default 10), the route job moves the whole run
+# onto hosted runners instead: a dead fleet must not stop the reviewed
+# lifecycle. The route job itself always runs hosted, because it must run
+# precisely when the organisation's runners cannot take work.
 jobs:
+  route:
+    name: Route onto a live runner pool
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    uses: ./.github/workflows/runner-route.yml
   policy:
     name: Action Policy
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    needs: route
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 10
     outputs:
       mode: ${{ steps.policy.outputs.mode }}
@@ -56,9 +65,9 @@ jobs:
 
   merge-evidence:
     name: Verify merged commit evidence
-    needs: policy
+    needs: [route, policy]
     if: needs.policy.outputs.run_post_merge == 'true'
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 10
     outputs:
       validated: ${{ steps.evidence.outputs.validated }}
@@ -79,9 +88,9 @@ jobs:
 
   preflight-evidence:
     name: Verify preflight evidence
-    needs: policy
+    needs: [route, policy]
     if: github.event_name == 'pull_request' && needs.policy.outputs.run_full == 'true'
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 10
     outputs:
       validated: ${{ steps.evidence.outputs.validated }}
@@ -102,12 +111,13 @@ jobs:
           echo "validated=$validated" >> "$GITHUB_OUTPUT"
 
   test:
-    needs: [policy, merge-evidence, preflight-evidence]
+    needs: [route, policy, merge-evidence, preflight-evidence]
     if: >-
-      always() && needs.policy.result == 'success' &&
+      always() && needs.route.result == 'success' &&
+      needs.policy.result == 'success' &&
       ((needs.policy.outputs.run_full == 'true' && needs.preflight-evidence.outputs.validated != 'true') ||
       (needs.policy.outputs.run_post_merge == 'true' && needs.merge-evidence.outputs.validated != 'true'))
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -132,9 +142,9 @@ jobs:
 
   post-merge:
     name: Post-merge smoke
-    needs: [policy, merge-evidence]
+    needs: [route, policy, merge-evidence]
     if: needs.policy.outputs.run_post_merge == 'true' && needs.merge-evidence.outputs.validated == 'true'
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -158,9 +168,10 @@ jobs:
       - run: npm run build
 
   codeql:
-    needs: [policy, merge-evidence, preflight-evidence]
+    needs: [route, policy, merge-evidence, preflight-evidence]
     if: >-
-      always() && needs.policy.result == 'success' &&
+      always() && needs.route.result == 'success' &&
+      needs.policy.result == 'success' &&
       (needs.policy.outputs.run_post_merge == 'true' ||
       (needs.policy.outputs.run_full == 'true' && needs.preflight-evidence.outputs.validated != 'true'))
     permissions:
@@ -169,12 +180,14 @@ jobs:
       packages: read
       security-events: write
     uses: ./.github/workflows/codeql.yml
+    with:
+      runner: ${{ needs.route.outputs.runner }}
 
   workflow-runtime:
     name: Workflow runtime policy
-    needs: policy
+    needs: [route, policy]
     if: needs.policy.result == 'success'
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 10
     steps:
       - name: Checkout exact validation commit
@@ -199,13 +212,14 @@ jobs:
 
   gate:
     name: CI
-    needs: [policy, merge-evidence, preflight-evidence, test, codeql, post-merge, workflow-runtime]
+    needs: [route, policy, merge-evidence, preflight-evidence, test, codeql, post-merge, workflow-runtime]
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 5
     steps:
       - name: Enforce the selected lifecycle lane
         env:
+          ROUTE: ${{ needs.route.result }}
           MODE: ${{ needs.policy.outputs.mode }}
           POLICY: ${{ needs.policy.result }}
           WORKFLOW_RUNTIME: ${{ needs.workflow-runtime.result }}
@@ -216,6 +230,7 @@ jobs:
           MERGE_VALIDATED: ${{ needs.merge-evidence.outputs.validated }}
           POST_MERGE: ${{ needs.post-merge.result }}
         run: |
+          test "$ROUTE" = success
           test "$POLICY" = success
           test "$WORKFLOW_RUNTIME" = success
           case "$MODE" in

@@ -26,13 +26,18 @@ permissions:
   contents: read
 
 # Jobs run on the organisation's own runners: the Linux runner group holds one
-# x86-64 runner. A fork's pull request keeps a hosted runner, because a pull
-# request controls the workflow file it runs and would otherwise execute its
-# own code on the organisation's hardware.
+# x86-64 runner. When the self-hosted queue has stalled longer than
+# CI_RUNNER_FALLBACK_MINUTES (default 10), the route job moves the whole run
+# onto hosted runners instead: a dead fleet must not stop a reviewed release.
 jobs:
+  route:
+    name: Route onto a live runner pool
+    uses: ./.github/workflows/runner-route.yml
+
   policy:
     name: Action Policy
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    needs: route
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 10
     # The organisation's Linux runner does not carry Node on its default PATH.
     steps:
@@ -48,8 +53,8 @@ jobs:
 
   validate:
     name: Validate reviewed release tag
-    needs: policy
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    needs: [route, policy]
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     timeout-minutes: 15
     permissions:
       actions: read
@@ -148,8 +153,8 @@ jobs:
 
   publish:
     name: Build and publish GitHub Release
-    needs: validate
-    runs-on: ${{ fromJSON((github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64"]') }}
+    needs: [route, validate]
+    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
     # 30 min: the bounded npm ci envelope (2 attempts x 600s + retry delay and
     # grace = 1225s) needs 60s headroom on top — same budget as the governed
     # CI test job, enforced by the runtime policy checker.
