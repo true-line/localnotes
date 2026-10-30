@@ -51,11 +51,12 @@ jobs:
           case "$FALLBACK_MINUTES" in '' | *[!0-9]*) FALLBACK_MINUTES=10 ;; esac
 
           oldest=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100" \
-            --jq 'min_by(.created_at) | .created_at // empty' 2>/dev/null) ||
+            --jq '[.workflow_runs[] | .created_at] | min // empty' 2>"$RUNNER_TEMP/queue-read.err") ||
             {
               # A failed queue read is not an empty queue: unknown fleet
               # health must route hosted, never hang the run on the fleet.
-              echo "::warning::Actions queue unreadable; routing onto hosted runners."
+              reason=$(tr '\n' ' ' < "$RUNNER_TEMP/queue-read.err" | cut -c1-160)
+              echo "::warning::Actions queue unreadable (${reason}); routing onto hosted runners."
               echo "runner=$hosted" >> "$GITHUB_OUTPUT"
               exit 0
             }
