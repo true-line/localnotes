@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AgentRuntime } from '../agent/runtime';
 import { createMockProvider } from '../agent/providers/mock';
+import { recordAgentAudit } from '../agent/audit';
 import type { AgentMessage, AgentProvider, AgentTool, ContextAttachment } from '../agent/types';
 
 export interface AgentSessionOptions {
@@ -36,7 +37,16 @@ export function useAgentSession(options: AgentSessionOptions = {}): AgentSession
   const [isStreaming, setIsStreaming] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [hasLastInput, setHasLastInput] = useState(false);
-  const runtimeRef = useRef(new AgentRuntime());
+  // Threat-model invariant 5: every agent action lands in the local audit
+  // log. Recording is fire-and-forget — a failed write must never break a
+  // running turn.
+  const runtimeRef = useRef(
+    new AgentRuntime({
+      audit: (entry) => {
+        void recordAgentAudit(entry).catch(() => {});
+      },
+    })
+  );
   const toolsRef = useRef<AgentTool[]>(tools);
   toolsRef.current = tools;
   const providersRef = useRef<AgentProvider[]>(providers);

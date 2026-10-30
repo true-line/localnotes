@@ -61,3 +61,23 @@ export interface ContextAttachment {
   /** Chips default-active when first offered (e.g. current note). */
   defaultActive?: boolean;
 }
+
+/**
+ * One attributable agent action (threat-model invariant 5): what ran, under
+ * which provider, with which arguments, and whether it succeeded. Message
+ * content is deliberately not recorded — this is the action trail, not a
+ * transcript.
+ */
+export interface AgentAuditEntry {
+  /** ISO timestamp. */
+  at: string;
+  providerId: string;
+  tool: string;
+  tier: number;
+  ok: boolean;
+  durationMs: number;
+  args: Record<string, unknown>;
+}
+
+/** Receives audit entries as they happen; must never throw into the turn. */
+export type AgentAuditSink = (entry: AgentAuditEntry) => void;

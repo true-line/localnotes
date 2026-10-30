@@ -7,6 +7,7 @@ import {
   resetRepositoryForTests,
   createWriteQueue,
   REVISION_CAP_PER_NOTE,
+  AGENT_AUDIT_CAP,
   type NotesRepository,
 } from '../storage';
 import type { Note } from '../types';
@@ -216,5 +217,84 @@ describe('export/import', () => {
     await expect(
       importVault(JSON.stringify({ hello: true }))
     ).rejects.toThrow(/not a LocalNotes archive/);
+  });
+});
+
+describe('agent audit log', () => {
+  let repo: NotesRepository;
+
+  const entry = (tool: string, overrides: Record<string, unknown> = {}) => ({
+    at: new Date().toISOString(),
+    providerId: 'mock',
+    tool,
+    tier: 0,
+    ok: true,
+    durationMs: 5,
+    args: { query: tool },
+    ...overrides,
+  });
+
+  beforeEach(async () => {
+    (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
+    resetRepositoryForTests();
+    repo = await getRepository();
+  });
+
+  it('appends and lists newest-first', async () => {
+    await repo.appendAgentAudit(entry('notes.search'));
+    await repo.appendAgentAudit(entry('notes.read'));
+    const rows = await repo.listAgentAudit(10);
+    expect(rows.map((r) => r.tool)).toEqual(['notes.read', 'notes.search']);
+  });
+
+  it('respects the list limit', async () => {
+    for (let i = 0; i < 5; i++) await repo.appendAgentAudit(entry(`t${i}`));
+    expect((await repo.listAgentAudit(3)).map((r) => r.tool)).toEqual([
+      't4',
+      't3',
+      't2',
+    ]);
+  });
+
+  it('bounds the log at AGENT_AUDIT_CAP entries, oldest trimmed first', async () => {
+    for (let i = 0; i < AGENT_AUDIT_CAP + 25; i++) {
+      await repo.appendAgentAudit(entry(`t${i}`));
+    }
+    const rows = await repo.listAgentAudit(AGENT_AUDIT_CAP + 10);
+    expect(rows).toHaveLength(AGENT_AUDIT_CAP);
+    expect(rows[0].tool).toBe(`t${AGENT_AUDIT_CAP + 24}`);
+    expect(rows[rows.length - 1].tool).toBe('t25');
+  });
+
+  it('clears the log', async () => {
+    await repo.appendAgentAudit(entry('notes.search'));
+    await repo.clearAgentAudit();
+    expect(await repo.listAgentAudit(10)).toEqual([]);
+  });
+});
+
+describe('agent audit log isolation', () => {
+  it('audit write failures never poison the vault write queue', async () => {
+    (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
+    resetRepositoryForTests();
+    const repo = await getRepository();
+    await repo.putNote(makeNote('a'));
+    // A function is not structured-cloneable, so the store.put rejects the
+    // way a quota failure would.
+    const poison = {
+      at: new Date().toISOString(),
+      providerId: 'mock',
+      tool: 'notes.search',
+      tier: 0,
+      ok: true,
+      durationMs: 1,
+      args: { fn: () => {} },
+    };
+    await expect(repo.appendAgentAudit(poison)).rejects.toBeTruthy();
+    await repo.putNote(makeNote('b'));
+    // Best-effort audit must not fail an export whose note writes succeeded.
+    await expect(repo.flushWrites()).resolves.toBeUndefined();
+    const archive = await exportVault();
+    expect(archive.notes.map((n) => n.id).sort()).toEqual(['a', 'b']);
   });
 });

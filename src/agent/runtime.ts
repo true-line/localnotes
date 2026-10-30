@@ -1,4 +1,5 @@
 import type {
+  AgentAuditSink,
   AgentMessage,
   AgentProvider,
   AgentTool,
@@ -46,6 +47,11 @@ function isPlaceholder(message: AgentMessage): boolean {
 export class AgentRuntime {
   private messages: AgentMessage[] = [];
   private controller: AbortController | null = null;
+  private readonly audit: AgentAuditSink | null;
+
+  constructor(options: { audit?: AgentAuditSink } = {}) {
+    this.audit = options.audit ?? null;
+  }
 
   getMessages(): AgentMessage[] {
     return [...this.messages];
@@ -144,7 +150,20 @@ export class AgentRuntime {
               ...(currentAssistant.toolCalls ?? []),
               event.call,
             ];
+            const startedAt = Date.now();
             const result = await this.executeTool(event.call, tools);
+            // Threat-model invariant 5: every agent action is attributable.
+            // The sink is sync by contract; storage-backed sinks are
+            // fire-and-forget on the caller side so the turn never waits.
+            this.audit?.({
+              at: new Date().toISOString(),
+              providerId: provider.id,
+              tool: event.call.name,
+              tier: result.tier,
+              ok: result.ok,
+              durationMs: Date.now() - startedAt,
+              args: event.call.args,
+            });
             this.messages.push({
               role: 'tool',
               content: result.content,
@@ -198,10 +217,10 @@ export class AgentRuntime {
   private async executeTool(
     call: { id: string; name: string; args: Record<string, unknown> },
     tools: AgentTool[]
-  ): Promise<{ callId: string; ok: boolean; content: string }> {
+  ): Promise<{ callId: string; ok: boolean; content: string; tier: number }> {
     const tool = tools.find((t) => t.name === call.name);
     if (!tool) {
-      return { callId: call.id, ok: false, content: `unknown tool: ${call.name}` };
+      return { callId: call.id, ok: false, content: `unknown tool: ${call.name}`, tier: -1 };
     }
     // Model output is untrusted input: args are validated against the
     // tool's schema before execution, regardless of the provider.
@@ -211,15 +230,17 @@ export class AgentRuntime {
         callId: call.id,
         ok: false,
         content: `invalid arguments: ${validation.errors.join('; ')}`,
+        tier: tool.tier,
       };
     }
     try {
       const result = await tool.execute(call.args);
-      return { callId: call.id, ...result };
+      return { callId: call.id, tier: tool.tier, ...result };
     } catch (error) {
       return {
         callId: call.id,
         ok: false,
+        tier: tool.tier,
         content: error instanceof Error ? error.message : String(error),
       };
     }
