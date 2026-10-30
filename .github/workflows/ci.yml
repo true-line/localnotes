@@ -213,6 +213,25 @@ jobs:
       - name: Enforce bounded workflow runtime
         run: node .ci-runtime-policy/tools/ci-runtime/runtime-policy.mjs --root "$GITHUB_WORKSPACE"
 
+      - name: Lint workflow files
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
+          # actionlint_1.7.12_linux_amd64.tar.gz, from the release checksums.
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          # A pinned release verified against a pinned checksum: the
+          # validation lane takes no floating dependency, and workflow
+          # expression mistakes fail the gate before merge rather than at
+          # dispatch. shellcheck integration stays optional: hosted runners
+          # carry it, the organisation fleet does not.
+          curl -fsSL --retry 2 -o "$RUNNER_TEMP/actionlint.tgz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$RUNNER_TEMP/actionlint.tgz" | shasum -a 256 --check -
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -version
+          "$RUNNER_TEMP/actionlint"
+
   gate:
     name: CI
     needs: [route, policy, merge-evidence, preflight-evidence, test, codeql, post-merge, workflow-runtime]
