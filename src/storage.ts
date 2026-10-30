@@ -228,6 +228,10 @@ export function createWriteQueue() {
 async function openRepository(): Promise<NotesRepository> {
   const db = await openDatabase();
   const queue = createWriteQueue();
+  // The audit log is best-effort: its writes get their own queue so a failed
+  // audit append (e.g. quota) can never surface through flushWrites() and
+  // fail an export or import whose note writes all succeeded.
+  const auditQueue = createWriteQueue();
 
   const tx = (stores: string[], mode: IDBTransactionMode) =>
     db.transaction(stores, mode);
@@ -486,7 +490,7 @@ async function openRepository(): Promise<NotesRepository> {
     },
 
     appendAgentAudit(entry: Omit<AgentAuditEntry, 'seq'>) {
-      return queue.enqueue(() => {
+      return auditQueue.enqueue(() => {
         const transaction = tx(['agent_audit'], 'readwrite');
         const store = transaction.objectStore('agent_audit');
         return (async () => {
@@ -513,7 +517,7 @@ async function openRepository(): Promise<NotesRepository> {
     },
 
     clearAgentAudit() {
-      return queue.enqueue(() => {
+      return auditQueue.enqueue(() => {
         const transaction = tx(['agent_audit'], 'readwrite');
         const store = transaction.objectStore('agent_audit');
         return requestToPromise(store.clear()).then(() =>

@@ -272,3 +272,29 @@ describe('agent audit log', () => {
     expect(await repo.listAgentAudit(10)).toEqual([]);
   });
 });
+
+describe('agent audit log isolation', () => {
+  it('audit write failures never poison the vault write queue', async () => {
+    (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
+    resetRepositoryForTests();
+    const repo = await getRepository();
+    await repo.putNote(makeNote('a'));
+    // A function is not structured-cloneable, so the store.put rejects the
+    // way a quota failure would.
+    const poison = {
+      at: new Date().toISOString(),
+      providerId: 'mock',
+      tool: 'notes.search',
+      tier: 0,
+      ok: true,
+      durationMs: 1,
+      args: { fn: () => {} },
+    };
+    await expect(repo.appendAgentAudit(poison)).rejects.toBeTruthy();
+    await repo.putNote(makeNote('b'));
+    // Best-effort audit must not fail an export whose note writes succeeded.
+    await expect(repo.flushWrites()).resolves.toBeUndefined();
+    const archive = await exportVault();
+    expect(archive.notes.map((n) => n.id).sort()).toEqual(['a', 'b']);
+  });
+});

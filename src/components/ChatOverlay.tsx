@@ -46,6 +46,8 @@ export function ChatOverlay({
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
+  const remoteSettingsRef = useRef<HTMLDetailsElement>(null);
+  const auditRef = useRef<HTMLDetailsElement>(null);
 
   const activeProvider =
     session.providers.find((p) => p.id === session.providerId) ??
@@ -99,14 +101,20 @@ export function ChatOverlay({
   };
 
   // Offered when the settings panel opens; the field stays free-text because
-  // not every OpenAI-compatible endpoint implements /models.
+  // not every OpenAI-compatible endpoint implements /models. The saved API
+  // key only travels to the endpoint it was saved against: exploring a draft
+  // base URL must never leak credentials to a destination the user has not
+  // committed to (such requests go out unauthenticated).
   const refreshModels = async () => {
     try {
-      const url = `${remoteDraft.baseUrl.replace(/\/+$/, '')}/models`;
-      const response = await fetch(url, {
-        headers: remoteDraft.apiKey
-          ? { authorization: `Bearer ${remoteDraft.apiKey}` }
-          : {},
+      const draftUrl = `${remoteDraft.baseUrl.replace(/\/+$/, '')}`;
+      const savedUrl = settings.openai.baseUrl.replace(/\/+$/, '');
+      const committed = draftUrl === savedUrl;
+      const response = await fetch(`${draftUrl}/models`, {
+        headers:
+          committed && remoteDraft.apiKey
+            ? { authorization: `Bearer ${remoteDraft.apiKey}` }
+            : {},
       });
       if (!response.ok) throw new Error(String(response.status));
       const data = (await response.json()) as {
@@ -348,13 +356,17 @@ export function ChatOverlay({
       )}
 
       {isRemoteProvider && (
-        <details
-          className="agent-chat__remote-settings"
-          onToggle={(e) => {
-            if ((e.target as HTMLDetailsElement).open) void refreshModels();
-          }}
-        >
-          <summary>Remote provider settings</summary>
+        <details ref={remoteSettingsRef} className="agent-chat__remote-settings">
+          {/* Summary clicks run before the toggle, so "not open" here means
+              "about to open"; React's onToggle proved unreliable across
+              re-renders in the extension host. */}
+          <summary
+            onClick={() => {
+              if (!remoteSettingsRef.current?.open) void refreshModels();
+            }}
+          >
+            Remote provider settings
+          </summary>
           <label className="agent-chat__field">
             <span>Base URL</span>
             <input
@@ -424,13 +436,14 @@ export function ChatOverlay({
         </details>
       )}
 
-      <details
-        className="agent-chat__audit"
-        onToggle={(e) => {
-          if ((e.target as HTMLDetailsElement).open) void reloadAudit();
-        }}
-      >
-        <summary>Agent audit log</summary>
+      <details ref={auditRef} className="agent-chat__audit">
+        <summary
+          onClick={() => {
+            if (!auditRef.current?.open) void reloadAudit();
+          }}
+        >
+          Agent audit log
+        </summary>
         {auditEntries === null ? (
           <p className="agent-chat__settings-note">Loading…</p>
         ) : auditEntries.length === 0 ? (

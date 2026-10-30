@@ -298,7 +298,7 @@ describe('ChatOverlay', () => {
     const remoteSettings = (baseUrl: string) => ({
       ...DEFAULT_AGENT_SETTINGS,
       providerId: 'openai',
-      openai: { baseUrl, model: 'qwen3:30b-a3b', apiKey: '' },
+      openai: { baseUrl, model: 'qwen3:30b-a3b', apiKey: 'sk-saved-key' },
     });
 
     it('shows the endpoint host on the remote badge', () => {
@@ -338,9 +338,40 @@ describe('ChatOverlay', () => {
         'list',
         'agent-chat-models'
       );
+      // The endpoint matches the committed settings, so the key may travel.
       expect(fetchMock).toHaveBeenCalledWith(
         'http://localhost:11434/v1/models',
-        expect.objectContaining({ headers: {} })
+        expect.objectContaining({
+          headers: { authorization: 'Bearer sk-saved-key' },
+        })
+      );
+    });
+
+    it('never sends the saved API key to an unsaved draft endpoint', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [] }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      render(
+        <ChatOverlay
+          open
+          onClose={vi.fn()}
+          session={remoteSession()}
+          settings={remoteSettings('http://localhost:11434/v1')}
+        />
+      );
+      // Explore a different endpoint without saving, then reopen the panel.
+      fireEvent.change(screen.getByLabelText('Base URL'), {
+        target: { value: 'http://elsewhere:8080/v1' },
+      });
+      fireEvent.click(screen.getByText('Remote provider settings')); // close
+      fireEvent.click(screen.getByText('Remote provider settings')); // reopen
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://elsewhere:8080/v1/models',
+        { headers: {} }
       );
     });
 
