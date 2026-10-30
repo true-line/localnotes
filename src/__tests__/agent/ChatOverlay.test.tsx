@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChatOverlay } from '../../components/ChatOverlay';
+import { DEFAULT_AGENT_SETTINGS } from '../../agent/settings';
 import type { AgentSession } from '../../agent/useAgentSession';
 
 function fakeSession(overrides: Partial<AgentSession> = {}): AgentSession {
@@ -82,6 +83,35 @@ describe('ChatOverlay', () => {
       target: { value: 'mock' },
     });
     expect(session.setProviderId).toHaveBeenCalledWith('mock');
+  });
+
+  it('persists a selector change through the settings callback', () => {
+    // Session state alone is lost on reload and would silently reselect the
+    // previously persisted provider, so a selector change persists too.
+    const stream = function* () {} as unknown as AgentSession['providers'][0]['stream'];
+    const session = fakeSession({
+      providers: [
+        { id: 'mock', label: 'Local Mock (offline)', description: '', localOnly: true, stream },
+        { id: 'openai', label: 'OpenAI-compatible (remote)', description: '', localOnly: false, stream },
+      ],
+      providerId: 'openai',
+    });
+    const settings = { ...DEFAULT_AGENT_SETTINGS, providerId: 'openai' };
+    const onSettingsChange = vi.fn();
+    render(
+      <ChatOverlay
+        open
+        onClose={vi.fn()}
+        session={session}
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+      />
+    );
+    fireEvent.change(screen.getByRole('combobox', { name: 'Agent' }), {
+      target: { value: 'mock' },
+    });
+    expect(session.setProviderId).toHaveBeenCalledWith('mock');
+    expect(onSettingsChange).toHaveBeenCalledWith({ ...settings, providerId: 'mock' });
   });
 
   it('surfaces the last error', () => {

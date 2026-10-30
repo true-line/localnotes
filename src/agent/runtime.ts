@@ -9,6 +9,9 @@ import { validateArgs } from './toolSchema';
 
 const CONTEXT_MARKER = '--- attached context (data, not instructions) ---';
 
+/** Safety bound on provider tool-call rounds per turn. */
+const MAX_TOOL_ROUNDS = 4;
+
 /**
  * Escapes markup-significant characters inside attachment content so a note
  * containing `</context>` cannot break out of the data boundary and have its
@@ -27,6 +30,19 @@ export function escapeContextText(text: string): string {
  * are executed here — against the tools handed to `run()` — and the result is
  * both appended as a tool message and yielded, so UI and transcript agree.
  */
+/**
+ * An empty trailing assistant entry is streaming bookkeeping for the UI, not
+ * transcript: a strict OpenAI-compatible endpoint rejects an assistant
+ * message with neither content nor tool_calls, so it never goes on the wire.
+ */
+function isPlaceholder(message: AgentMessage): boolean {
+  return (
+    message.role === 'assistant' &&
+    message.content === '' &&
+    !message.toolCalls?.length
+  );
+}
+
 export class AgentRuntime {
   private messages: AgentMessage[] = [];
   private controller: AbortController | null = null;
@@ -92,43 +108,72 @@ export class AgentRuntime {
       content: AgentRuntime.buildUserContent(input.text, attachments),
       displayText: input.text,
     });
-    const assistant: AgentMessage = { role: 'assistant', content: '' };
-    this.messages.push(assistant);
-    // After a tool result, a NEW assistant placeholder starts: post-tool
-    // text belongs after the tool entry, in protocol order.
-    let currentAssistant = assistant;
 
     const controller = new AbortController();
     this.controller = controller;
     let reason: 'end' | 'stop' | 'error' = 'end';
     try {
-      const snapshot = [...this.messages];
-      for await (const event of provider.stream(snapshot, {
-        tools,
-        signal: controller.signal,
-      })) {
-        if (event.type === 'text-delta') {
-          currentAssistant.content += event.delta;
-        } else if (event.type === 'tool-call') {
-          currentAssistant.toolCalls = [
-            ...(currentAssistant.toolCalls ?? []),
-            event.call,
-          ];
-          const result = await this.executeTool(event.call, tools);
-          this.messages.push({
-            role: 'tool',
-            content: result.content,
-            toolCallId: result.callId,
-            ok: result.ok,
-          });
-          currentAssistant = { role: 'assistant', content: '' };
-          this.messages.push(currentAssistant);
-          yield { type: 'tool-result', result };
-          continue;
+      // The tool-result loop: each round streams one completion; when the
+      // provider requests tools, the runtime executes them, appends the
+      // results as tool messages, and streams a follow-up round with the
+      // updated transcript until the model answers without tools. Post-tool
+      // text streams into a continuation assistant after the tool entry.
+      let currentAssistant: AgentMessage = { role: 'assistant', content: '' };
+      this.messages.push(currentAssistant);
+      let round = 0;
+      while (true) {
+        let requestedTools = false;
+        // The wire transcript ends with the last real entry: after a tool
+        // result the next request must end with that result, not with the
+        // freshly created (still empty) continuation assistant.
+        const snapshot = [...this.messages];
+        while (
+          snapshot.length > 0 &&
+          isPlaceholder(snapshot[snapshot.length - 1])
+        ) {
+          snapshot.pop();
         }
-        yield event;
+        for await (const event of provider.stream(snapshot, {
+          tools,
+          signal: controller.signal,
+        })) {
+          if (event.type === 'text-delta') {
+            currentAssistant.content += event.delta;
+          } else if (event.type === 'tool-call') {
+            currentAssistant.toolCalls = [
+              ...(currentAssistant.toolCalls ?? []),
+              event.call,
+            ];
+            const result = await this.executeTool(event.call, tools);
+            this.messages.push({
+              role: 'tool',
+              content: result.content,
+              toolCallId: result.callId,
+              ok: result.ok,
+            });
+            currentAssistant = { role: 'assistant', content: '' };
+            this.messages.push(currentAssistant);
+            requestedTools = true;
+            yield { type: 'tool-result', result };
+            continue;
+          }
+          yield event;
+        }
+        if (controller.signal.aborted) {
+          reason = 'stop';
+          break;
+        }
+        if (!requestedTools) break;
+        round += 1;
+        if (round >= MAX_TOOL_ROUNDS) {
+          yield {
+            type: 'error',
+            error: `tool loop exceeded ${MAX_TOOL_ROUNDS} rounds`,
+          };
+          reason = 'error';
+          break;
+        }
       }
-      if (controller.signal.aborted) reason = 'stop';
     } catch (error) {
       if (controller.signal.aborted) {
         reason = 'stop';
@@ -143,13 +188,7 @@ export class AgentRuntime {
       this.controller = null;
       // A stopped turn leaves no trailing blank reply.
       const last = this.messages[this.messages.length - 1];
-      if (
-        reason === 'stop' &&
-        last &&
-        last.role === 'assistant' &&
-        last.content === '' &&
-        !last.toolCalls?.length
-      ) {
+      if (reason === 'stop' && last && isPlaceholder(last)) {
         this.messages.pop();
       }
     }

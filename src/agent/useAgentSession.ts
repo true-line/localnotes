@@ -1,10 +1,17 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AgentRuntime } from '../agent/runtime';
-import { getProvider, getProviders } from '../agent/registry';
-import type { AgentMessage, AgentTool, ContextAttachment, StreamEvent } from '../agent/types';
+import { createMockProvider } from '../agent/providers/mock';
+import type { AgentMessage, AgentProvider, AgentTool, ContextAttachment } from '../agent/types';
+
+export interface AgentSessionOptions {
+  tools?: AgentTool[];
+  providers?: AgentProvider[];
+  /** Followed until the user picks an agent manually. */
+  initialProviderId?: string;
+}
 
 export interface AgentSession {
-  providers: ReturnType<typeof getProviders>;
+  providers: AgentProvider[];
   providerId: string;
   /** Switching providers starts a fresh session. */
   setProviderId: (id: string) => void;
@@ -19,12 +26,12 @@ export interface AgentSession {
   clear: () => void;
 }
 
-export function useAgentSession(tools: AgentTool[] = [], initialProviderId?: string): AgentSession {
-  const providers = getProviders();
-  const fallback = providers[0]?.id ?? 'mock';
-  const [providerId, setProviderIdState] = useState(
-    initialProviderId ?? fallback
-  );
+export function useAgentSession(options: AgentSessionOptions = {}): AgentSession {
+  const { tools = [], initialProviderId } = options;
+  const providers = options.providers ?? [createMockProvider()];
+  const fallbackId = providers[0]?.id ?? 'mock';
+
+  const [providerId, setProviderIdState] = useState(initialProviderId ?? fallbackId);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -32,18 +39,30 @@ export function useAgentSession(tools: AgentTool[] = [], initialProviderId?: str
   const runtimeRef = useRef(new AgentRuntime());
   const toolsRef = useRef<AgentTool[]>(tools);
   toolsRef.current = tools;
+  const providersRef = useRef<AgentProvider[]>(providers);
+  providersRef.current = providers;
   const lastInputRef = useRef<{
     text: string;
     attachments: ContextAttachment[];
   } | null>(null);
   const streamingRef = useRef(false);
+  // Once the user picks an agent, settings-driven initial ids stop applying.
+  const userChosenRef = useRef(false);
+
+  useEffect(() => {
+    if (initialProviderId && !userChosenRef.current) {
+      setProviderIdState(initialProviderId);
+    }
+  }, [initialProviderId]);
 
   const send = useCallback(
     async (text: string, attachments: ContextAttachment[] = []) => {
       if (streamingRef.current || text.trim() === '') return;
-      const provider = getProvider(providerId);
+      const provider =
+        providersRef.current.find((p) => p.id === providerId) ??
+        providersRef.current[0];
       if (!provider) {
-        setLastError(`unknown provider: ${providerId}`);
+        setLastError('no agent provider available');
         return;
       }
       lastInputRef.current = { text, attachments };
@@ -86,6 +105,7 @@ export function useAgentSession(tools: AgentTool[] = [], initialProviderId?: str
   const setProviderId = useCallback((id: string) => {
     // Switching providers starts a fresh session; a mid-conversation switch
     // would otherwise mix context across providers with different semantics.
+    userChosenRef.current = true;
     setProviderIdState(id);
     runtimeRef.current.clear();
     lastInputRef.current = null;
@@ -116,6 +136,3 @@ export function useAgentSession(tools: AgentTool[] = [], initialProviderId?: str
     clear,
   };
 }
-
-/** Re-exported for tests that want the exact event union. */
-export type { StreamEvent };

@@ -4,6 +4,9 @@ import { useNoteEmbeddings } from './hooks/useNoteEmbeddings';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
 import { useAgentSession } from './agent/useAgentSession';
+import { buildProviders } from './agent/registry';
+import { DEFAULT_AGENT_SETTINGS, loadAgentSettings, saveAgentSettings } from './agent/settings';
+import type { AgentSettings } from './agent/settings';
 import { createTools, type ToolContext } from './agent/tools';
 import { fuzzyScore } from './fuzzyMatch';
 import { getNoteConnections } from './knowledgeGraph';
@@ -80,7 +83,20 @@ export function App() {
     };
     return createTools(ctx);
   }, [notes, embeddings]);
-  const session = useAgentSession(tools);
+  // Agent settings (provider, endpoint, model) persist in the settings store
+  // and drive the provider registry.
+  const [agentSettings, setAgentSettings] = useState(DEFAULT_AGENT_SETTINGS);
+  useEffect(() => {
+    void loadAgentSettings().then(setAgentSettings);
+  }, []);
+  const handleSaveAgentSettings = useCallback((next: AgentSettings) => {
+    setAgentSettings(next);
+    saveAgentSettings(next).catch((error) =>
+      console.error('localnotes: failed to save agent settings', error)
+    );
+  }, []);
+  const providers = useMemo(() => buildProviders(agentSettings), [agentSettings]);
+  const session = useAgentSession({ tools, providers, initialProviderId: agentSettings.providerId });
 
   // Explicit context chips: what the agent receives is decided here, shown
   // in the drawer as removable pills, and never attached implicitly.
@@ -394,6 +410,8 @@ export function App() {
         session={session}
         attachmentOptions={attachmentOptions}
         onWikiLinkClick={handleChatWikiLinkClick}
+        settings={agentSettings}
+        onSettingsChange={handleSaveAgentSettings}
       />
     </div>
   );
