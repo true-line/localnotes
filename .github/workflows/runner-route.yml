@@ -1,0 +1,68 @@
+# Fleet-health probe shared by CI and Release. It answers one question before
+# any job lands on the organisation's hardware: are the self-hosted runners
+# taking work right now? A healthy fleet drains its queue in seconds to a few
+# minutes, so the oldest still-queued workflow run is the cheapest observable.
+# When that run has waited longer than CI_RUNNER_FALLBACK_MINUTES (repository
+# variable, default 10), every job in the calling run is routed onto hosted
+# runners instead — a dead fleet must not stop the reviewed lifecycle. The
+# probe itself always runs hosted, checks out no repository code, and only
+# reads the Actions queue with the run's own read-only token. An unreadable
+# queue also routes hosted: unknown fleet health must not hang the run.
+name: Runner route
+
+on:
+  workflow_call:
+    outputs:
+      runner:
+        description: JSON array of runs-on labels for the calling run's jobs
+        value: ${{ jobs.probe.outputs.runner }}
+
+permissions:
+  actions: read
+
+jobs:
+  probe:
+    name: Probe runner fleet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      runner: ${{ steps.route.outputs.runner }}
+    steps:
+      - name: Route onto a live runner pool
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork || false }}
+          FALLBACK_MINUTES: ${{ vars.CI_RUNNER_FALLBACK_MINUTES || 10 }}
+        run: |
+          set -euo pipefail
+          hosted='["ubuntu-latest"]'
+          fleet='["self-hosted", "Linux", "X64"]'
+
+          if [ "$EVENT_NAME" = merge_group ] || [ "$IS_FORK" = true ]; then
+            # Untrusted events never run on organisation hardware.
+            echo "Untrusted event; hosted runners."
+            echo "runner=$hosted" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          FALLBACK_MINUTES=$(printf '%s' "$FALLBACK_MINUTES" | tr -d ' ')
+          case "$FALLBACK_MINUTES" in '' | *[!0-9]*) FALLBACK_MINUTES=10 ;; esac
+
+          oldest=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100" \
+            --jq 'min_by(.created_at) | .created_at // empty' 2>/dev/null) || oldest=''
+          if [ -z "$oldest" ]; then
+            echo "Queue empty; organisation runners take this run."
+            echo "runner=$fleet" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          age_minutes=$(( ($(date +%s) - $(date -u -d "$oldest" +%s)) / 60 ))
+          echo "Oldest queued run is ${age_minutes}m old (fallback after ${FALLBACK_MINUTES}m)."
+          if [ "$age_minutes" -ge "$FALLBACK_MINUTES" ]; then
+            echo "::warning::Self-hosted queue stalled for ${age_minutes}m; routing onto hosted runners."
+            echo "runner=$hosted" >> "$GITHUB_OUTPUT"
+          else
+            echo "runner=$fleet" >> "$GITHUB_OUTPUT"
+          fi
