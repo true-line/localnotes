@@ -219,6 +219,56 @@
   color: var(--color-muted);
 }
 
+.agent-chat__remote-settings {
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.agent-chat__remote-settings summary {
+  cursor: pointer;
+  color: var(--color-muted);
+  user-select: none;
+}
+
+.agent-chat__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-chat__field span {
+  width: 90px;
+  flex-shrink: 0;
+  color: var(--color-muted);
+}
+
+.agent-chat__field input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+.agent-chat__settings-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.agent-chat__settings-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
 .agent-chat__input {
   flex: 1;
   resize: none;

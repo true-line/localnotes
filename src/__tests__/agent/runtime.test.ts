@@ -74,9 +74,14 @@ describe('AgentRuntime', () => {
 
   it('executes known tools and records the tool message', async () => {
     const runtime = new AgentRuntime();
-    const provider = providerFrom([
-      { type: 'tool-call', call: { id: 'c1', name: 'notes.search', args: { query: 'x' } } },
-    ]);
+    let called = false;
+    const provider = providerFrom(async function* () {
+      // Yield once; a second round must not re-run the same tool-call
+      if (!called) {
+        called = true;
+        yield { type: 'tool-call', call: { id: 'c1', name: 'notes.search', args: { query: 'x' } } };
+      }
+    });
     const tools = [
       {
         name: 'notes.search',
@@ -101,10 +106,10 @@ describe('AgentRuntime', () => {
 
   it('streams post-tool text into a continuation assistant message after the result', async () => {
     const runtime = new AgentRuntime();
-    const provider = providerFrom([
-      { type: 'tool-call', call: { id: 'c1', name: 'notes.search', args: {} } },
-      { type: 'text-delta', delta: 'post-tool reply' },
-    ]);
+    const provider = providerFrom(async function* () {
+      yield { type: 'tool-call', call: { id: 'c1', name: 'notes.search', args: {} } };
+      yield { type: 'text-delta', delta: 'post-tool reply' };
+    });
     const tools = [
       {
         name: 'notes.search',

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ContextAttachment } from '../agent/types';
 import type { AgentSession } from '../agent/useAgentSession';
+import { DEFAULT_AGENT_SETTINGS, type AgentSettings } from '../agent/settings';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import '../styles/ChatOverlay.css';
 
@@ -13,6 +14,8 @@ interface Props {
   /** Wikilinks inside assistant replies navigate like editor wikilinks. */
   onWikiLinkClick?: (target: string) => void;
   onTagClick?: (tag: string) => void;
+  settings?: AgentSettings;
+  onSettingsChange?: (settings: AgentSettings) => void;
 }
 
 export function ChatOverlay({
@@ -22,9 +25,14 @@ export function ChatOverlay({
   attachmentOptions = [],
   onWikiLinkClick,
   onTagClick,
+  settings = DEFAULT_AGENT_SETTINGS,
+  onSettingsChange,
 }: Props) {
   const [draft, setDraft] = useState('');
   const [activeIds, setActiveIds] = useState<Set<string>>(new Set());
+  const [remoteDraft, setRemoteDraft] = useState(settings.openai);
+  // Selected text from the agent-settings panel.
+  const [permissionNote, setPermissionNote] = useState('');
   // Chips the user has already decided about (toggled) or that were offered:
   // defaultActive applies exactly once per chip, the first time it appears —
   // later appearances (notes hydrating, note switching) must not fight the
@@ -37,6 +45,46 @@ export function ChatOverlay({
   const activeProvider =
     session.providers.find((p) => p.id === session.providerId) ??
     session.providers[0];
+  const isRemoteProvider = activeProvider?.id === 'openai';
+
+  // Sync the remote-settings draft when settings change externally.
+  useEffect(() => {
+    setRemoteDraft(settings.openai);
+  }, [settings.openai]);
+
+  const grantNetworkAccess = async () => {
+    try {
+      const origin = new URL(remoteDraft.baseUrl).origin;
+      const pattern = `${origin}/*`;
+      const chromeApi = (
+        globalThis as {
+          chrome?: {
+            permissions?: {
+              request?: (details: { origins: string[] }) => Promise<boolean>;
+            };
+          };
+        }
+      ).chrome;
+      if (chromeApi?.permissions?.request) {
+        const granted = await chromeApi.permissions.request({ origins: [pattern] });
+        setPermissionNote(
+          granted ? `Access granted for ${pattern}` : `Access not granted for ${pattern}`
+        );
+      } else {
+        setPermissionNote(`Add ${pattern} to the extension's host permissions`);
+      }
+    } catch {
+      setPermissionNote('Invalid base URL');
+    }
+  };
+
+  const saveRemoteSettings = () => {
+    onSettingsChange?.({
+      ...settings,
+      providerId: 'openai',
+      openai: { ...remoteDraft },
+    });
+  };
 
   useEffect(() => {
     setActiveIds((prev) => {
@@ -231,6 +279,70 @@ export function ChatOverlay({
         <p className="agent-chat__error" role="alert">
           {session.lastError}
         </p>
+      )}
+
+      {isRemoteProvider && (
+        <details className="agent-chat__remote-settings">
+          <summary>Remote provider settings</summary>
+          <label className="agent-chat__field">
+            <span>Base URL</span>
+            <input
+              type="text"
+              value={remoteDraft.baseUrl}
+              onChange={(e) =>
+                setRemoteDraft({ ...remoteDraft, baseUrl: e.target.value })
+              }
+              placeholder="http://localhost:11434/v1"
+            />
+          </label>
+          <label className="agent-chat__field">
+            <span>Model</span>
+            <input
+              type="text"
+              value={remoteDraft.model}
+              onChange={(e) =>
+                setRemoteDraft({ ...remoteDraft, model: e.target.value })
+              }
+              placeholder="qwen3:30b-a3b"
+            />
+          </label>
+          <label className="agent-chat__field">
+            <span>API key (optional)</span>
+            <input
+              type="password"
+              value={remoteDraft.apiKey}
+              onChange={(e) =>
+                setRemoteDraft({ ...remoteDraft, apiKey: e.target.value })
+              }
+              placeholder="none needed for Ollama"
+            />
+          </label>
+          <div className="agent-chat__settings-actions">
+            <button
+              type="button"
+              className="agent-chat__chip"
+              onClick={() => void grantNetworkAccess()}
+              title="Grant this extension access to the endpoint origin"
+            >
+              Grant network access
+            </button>
+            <button
+              type="button"
+              className="agent-chat__chip agent-chat__chip--active"
+              onClick={saveRemoteSettings}
+              disabled={
+                remoteDraft.baseUrl.trim() === '' || remoteDraft.model.trim() === ''
+              }
+            >
+              Save
+            </button>
+          </div>
+          {permissionNote && (
+            <p className="agent-chat__settings-note" role="status">
+              {permissionNote}
+            </p>
+          )}
+        </details>
       )}
 
       <div className="agent-chat__chips" aria-label="Context attachments">
