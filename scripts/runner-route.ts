@@ -80,8 +80,15 @@ export function decideRoute(input: RouteInput): Route {
     return done(HOSTED);
   }
 
-  let fallback = Number.parseInt((input.fallbackMinutes ?? '').replace(/\s/g, ''), 10);
-  if (!Number.isInteger(fallback) || fallback < 0) fallback = 10;
+  // The whole normalized value must be digits, matching the shell version
+  // this replaced: parseInt alone would accept "2minutes" as 2 and route
+  // hosted far earlier than configured.
+  let fallback = 10;
+  const normalized = (input.fallbackMinutes ?? '').replace(/\s/g, '');
+  if (/^[0-9]+$/.test(normalized)) {
+    const parsed = Number.parseInt(normalized, 10);
+    if (Number.isInteger(parsed) && parsed >= 0) fallback = parsed;
+  }
 
   const census = input.census ?? EMPTY_CENSUS;
   if (census.attempted) {

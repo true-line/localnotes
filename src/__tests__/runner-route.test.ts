@@ -123,7 +123,7 @@ describe('decideRoute', () => {
   });
 
   it('falls back to a 10 minute threshold for unusable variables', () => {
-    for (const fallbackMinutes of ['', '  ', 'ten', '-5']) {
+    for (const fallbackMinutes of ['', '  ', 'ten', '-5', '2minutes', '1.5']) {
       const fleet = route({
         fallbackMinutes,
         queue: queue({ oldestQueuedAt: '2026-10-30T15:55:00Z' }),
