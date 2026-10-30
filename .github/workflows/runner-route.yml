@@ -17,8 +17,10 @@
 #      (repository variable, default 10), the run routes hosted.
 #
 # An unreadable queue also routes hosted: unknown fleet health must not
-# hang the run. The probe itself always runs hosted, checks out no
-# repository code, and only reads the Actions API.
+# hang the run. The probe itself always runs hosted, and only reads the
+# Actions API; its decision logic lives in scripts/runner-route.ts (unit-
+# tested in src/__tests__/runner-route.test.ts), which is why the probe
+# checks out the repository with a shallow, credential-free clone.
 name: Runner route
 
 on:
@@ -51,6 +53,13 @@ jobs:
     outputs:
       runner: ${{ steps.route.outputs.runner }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
       - name: Mint the chores-dumb census token
         id: chores
         if: env.HAS_CHORES == 'true'
@@ -75,65 +84,4 @@ jobs:
           FALLBACK_MINUTES: ${{ vars.CI_RUNNER_FALLBACK_MINUTES || 10 }}
         run: |
           set -euo pipefail
-          hosted='["ubuntu-latest"]'
-          fleet='["self-hosted", "Linux", "X64"]'
-          route_hosted() {
-            echo "runner=$hosted" >> "$GITHUB_OUTPUT"
-            exit 0
-          }
-
-          if [ "$EVENT_NAME" = merge_group ] || [ "$IS_FORK" = true ]; then
-            # Untrusted events never run on organisation hardware.
-            echo "Untrusted event; hosted runners."
-            route_hosted
-          fi
-
-          FALLBACK_MINUTES=$(printf '%s' "$FALLBACK_MINUTES" | tr -d ' ')
-          case "$FALLBACK_MINUTES" in '' | *[!0-9]*) FALLBACK_MINUTES=10 ;; esac
-
-          if [ "$HAS_CENSUS_TOKEN" = true ]; then
-            org="${GITHUB_REPOSITORY%%/*}"
-            online=$(GH_TOKEN="$CENSUS_TOKEN" gh api "/orgs/$org/actions/runners?per_page=100" \
-              --jq '[.runners[] | select(.status == "online" and any(.labels[]; .name == "self-hosted") and any(.labels[]; .name == "Linux") and any(.labels[]; .name == "X64"))] | length' \
-              2>"$RUNNER_TEMP/census.err") || online=''
-            if [ -n "$online" ]; then
-              echo "Fleet census: $online online runner(s) with the fleet labels."
-              if [ "$online" -eq 0 ]; then
-                echo "::warning::No online self-hosted runner; routing onto hosted runners."
-                route_hosted
-              fi
-            else
-              reason=$(tr '\n' ' ' < "$RUNNER_TEMP/census.err" | cut -c1-160)
-              echo "::warning::Fleet census unreadable (${reason}); relying on the queue signal."
-            fi
-          else
-            if [ "$MINT_FAILED" = true ]; then
-              echo "::warning::Census token mint failed; relying on the queue signal."
-            else
-              echo 'No census credentials; relying on the queue signal.'
-            fi
-          fi
-
-          oldest=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&per_page=100" \
-            --jq '[.workflow_runs[] | .created_at] | min // empty' 2>"$RUNNER_TEMP/queue-read.err") ||
-            {
-              # A failed queue read is not an empty queue: unknown fleet
-              # health must route hosted, never hang the run on the fleet.
-              reason=$(tr '\n' ' ' < "$RUNNER_TEMP/queue-read.err" | cut -c1-160)
-              echo "::warning::Actions queue unreadable (${reason}); routing onto hosted runners."
-              route_hosted
-            }
-          if [ -z "$oldest" ]; then
-            echo "Queue empty and the fleet census is healthy; organisation runners take this run."
-            echo "runner=$fleet" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          age_minutes=$(( ($(date +%s) - $(date -u -d "$oldest" +%s)) / 60 ))
-          echo "Oldest queued run is ${age_minutes}m old (fallback after ${FALLBACK_MINUTES}m)."
-          if [ "$age_minutes" -ge "$FALLBACK_MINUTES" ]; then
-            echo "::warning::Self-hosted queue stalled for ${age_minutes}m; routing onto hosted runners."
-            route_hosted
-          else
-            echo "runner=$fleet" >> "$GITHUB_OUTPUT"
-          fi
+          node scripts/runner-route.ts
