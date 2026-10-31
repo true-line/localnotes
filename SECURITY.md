@@ -1,11 +1,13 @@
 # Security policy
 
 Local Notes is a notes vault whose security posture is defined in
-[docs/threat-model.md](docs/threat-model.md): note data stays on the device,
-rendered and model-generated content is treated as untrusted input, and every
-agent action is explicit and reviewable. Vulnerability reports are triaged
-against that document; its assets (note content, vault integrity, API keys,
-and the app's privileged origin) and trust boundaries define what is in scope.
+[docs/threat-model.md](docs/threat-model.md). Note data stays on the device
+**by default** — content leaves the device only through a provider endpoint
+the user explicitly configures, or tool calls the user approves. Rendered and
+model-generated content is treated as untrusted input, and every agent action
+is explicit and reviewable. Vulnerability reports are triaged against that
+document; its assets (note content, vault integrity, API keys, and the app's
+privileged origin) and trust boundaries define what is in scope.
 
 ## Reporting a vulnerability
 
