@@ -25,24 +25,13 @@ permissions:
   actions: read
   contents: read
 
-# Jobs run on the organisation's own runners: the Linux runner group holds one
-# x86-64 runner. When the self-hosted queue has stalled longer than
-# CI_RUNNER_FALLBACK_MINUTES (default 10), the route job moves the whole run
-# onto hosted runners instead: a dead fleet must not stop a reviewed release.
+# Jobs run on GitHub-hosted runners: the repository is public and no release
+# step needs organisation hardware.
 jobs:
-  route:
-    name: Route onto a live runner pool
-    uses: ./.github/workflows/runner-route.yml
-    secrets:
-      chores_client_id: ${{ secrets.CHORES_DUMB_CLIENT_ID }}
-      chores_private_key: ${{ secrets.CHORES_DUMB_PRIVATE_KEY }}
-
   policy:
     name: Action Policy
-    needs: route
-    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-    # The organisation's Linux runner does not carry Node on its default PATH.
     steps:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -56,8 +45,8 @@ jobs:
 
   validate:
     name: Validate reviewed release tag
-    needs: [route, policy]
-    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
+    needs: policy
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       actions: read
@@ -156,8 +145,8 @@ jobs:
 
   publish:
     name: Build and publish GitHub Release
-    needs: [route, validate]
-    runs-on: ${{ fromJSON(needs.route.outputs.runner) }}
+    needs: validate
+    runs-on: ubuntu-latest
     # 30 min: the bounded npm ci envelope (2 attempts x 600s + retry delay and
     # grace = 1225s) needs 60s headroom on top — same budget as the governed
     # CI test job, enforced by the runtime policy checker.
@@ -199,7 +188,7 @@ jobs:
       - run: npm run build
 
       - name: Package extension
-        # adm-zip via node: the self-hosted runner does not carry a zip binary
+        # adm-zip via node: keeps packaging dependency-free of system zip
         run: node scripts/package-extension.mjs && ls -lh "localnotes-v${VERSION}.zip"
 
       - name: Prepare release notes
