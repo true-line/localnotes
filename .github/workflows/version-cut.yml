@@ -336,4 +336,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git tag -a "$TAG" "$CUT_COMMIT" -m "Release $TAG"
+          # Single-quoted on purpose (shellcheck SC2016): git's own shell
+          # expands $GH_TOKEN when the helper runs, so the token never lands
+          # in this process's command line or argv of git.
           git -c 'credential.helper=!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f' push origin "$TAG"
