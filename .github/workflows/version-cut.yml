@@ -7,9 +7,8 @@
 #
 # Every job here runs on hosted runners on purpose: this workflow is API-only
 # except for a short install, and the tag job can wait on the merged commit's
-# CI for a long time — occupying the single self-hosted Linux runner would
-# prevent that very CI from finishing (GitHub queues unmatched jobs, so the
-# waiter and the waited-on work would deadlock).
+# CI for a long time — a waiter must never occupy a runner that the waited-on
+# work needs (GitHub queues unmatched jobs, so the two would deadlock).
 
 name: Version cut
 
@@ -184,8 +183,8 @@ jobs:
     name: Tag version merges
     needs: [policy, version-pr]
     # Hosted runner: this job is an API-only poll that can wait a long time
-    # for the merged commit's CI — it must not hold the self-hosted runner
-    # that CI itself needs (that would deadlock the release).
+    # for the merged commit's CI — a waiter must never occupy a runner that
+    # CI itself needs (that would deadlock the release).
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -337,4 +336,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git tag -a "$TAG" "$CUT_COMMIT" -m "Release $TAG"
+          # Single-quoted on purpose (shellcheck SC2016): git's own shell
+          # expands $GH_TOKEN when the helper runs, so the token never lands
+          # in this process's command line or argv of git.
           git -c 'credential.helper=!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f' push origin "$TAG"
