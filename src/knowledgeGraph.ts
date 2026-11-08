@@ -10,12 +10,17 @@ import type {
 } from './types';
 import {
   cosineSimilarity,
+  cosineSimilarityWithNorms,
+  vectorNorm,
   computeLocalSemanticEmbedding,
   computeFacetSimilarity,
+  computeNoteFacetProfile,
+  facetSimilarityFromProfiles,
   DEFAULT_SIMILARITY_THRESHOLD,
   STOPWORDS,
   stemWord,
 } from './embeddings';
+import type { NoteFacetProfile } from './embeddings';
 
 export interface ExtractedMetadata {
   /** Unique wiki-link targets (preserving original casing of first occurrence) */
@@ -80,23 +85,25 @@ export function extractLinksAndTags(content: string): ExtractedMetadata {
   };
 }
 
-/**
- * Finds other notes whose title (or primary title entity before comma/parenthesis,
- * e.g. "Bakersfield" from "Bakersfield, Ca") is mentioned directly in `note.content`
- * as a whole word/phrase (even without [[brackets]]).
- */
-export function findPlainTextNoteMentions(
-  note: Note,
-  allNotes: Note[]
-): Note[] {
-  const cleaned = note.content
+function cleanContentForMentions(content: string): string {
+  return content
     .replace(FENCED_CODE_RE, ' ')
     .replace(INLINE_CODE_RE, ' ');
-  if (!cleaned.trim()) return [];
+}
 
-  const mentioned: Note[] = [];
-  for (const candidate of allNotes) {
-    if (candidate.id === note.id) continue;
+/**
+ * Precompiled title patterns for one candidate note. Building the regexes is
+ * the expensive part of mention detection, so callers that scan many notes
+ * against the same vault compile them once and reuse them.
+ */
+interface MentionMatcher {
+  note: Note;
+  patterns: RegExp[];
+}
+
+function buildMentionMatchers(notes: Note[]): MentionMatcher[] {
+  const matchers: MentionMatcher[] = [];
+  for (const candidate of notes) {
     const fullTitle = candidate.title.trim();
     if (fullTitle.length < 2) continue;
 
@@ -109,19 +116,50 @@ export function findPlainTextNoteMentions(
       termsToCheck.push(primaryEntity);
     }
 
-    const isMatched = termsToCheck.some((term) => {
-      const pattern = new RegExp(
-        `(?:^|[^a-zA-Z0-9_])(${escapeRegExp(term)})(?=$|[^a-zA-Z0-9_])`,
-        'i'
-      );
-      return pattern.test(cleaned);
+    matchers.push({
+      note: candidate,
+      patterns: termsToCheck.map(
+        (term) =>
+          new RegExp(
+            `(?:^|[^a-zA-Z0-9_])(${escapeRegExp(term)})(?=$|[^a-zA-Z0-9_])`,
+            'i'
+          )
+      ),
     });
+  }
+  return matchers;
+}
 
-    if (isMatched) {
-      mentioned.push(candidate);
+function findMentionsWithMatchers(
+  cleaned: string,
+  selfId: string,
+  matchers: MentionMatcher[]
+): Note[] {
+  if (!cleaned.trim()) return [];
+  const mentioned: Note[] = [];
+  for (const matcher of matchers) {
+    if (matcher.note.id === selfId) continue;
+    if (matcher.patterns.some((pattern) => pattern.test(cleaned))) {
+      mentioned.push(matcher.note);
     }
   }
   return mentioned;
+}
+
+/**
+ * Finds other notes whose title (or primary title entity before comma/parenthesis,
+ * e.g. "Bakersfield" from "Bakersfield, Ca") is mentioned directly in `note.content`
+ * as a whole word/phrase (even without [[brackets]]).
+ */
+export function findPlainTextNoteMentions(
+  note: Note,
+  allNotes: Note[]
+): Note[] {
+  return findMentionsWithMatchers(
+    cleanContentForMentions(note.content),
+    note.id,
+    buildMentionMatchers(allNotes)
+  );
 }
 
 /**
@@ -286,6 +324,14 @@ export function buildKnowledgeGraph(
     }
   }
 
+  // Compile title-mention patterns and strip code blocks once per vault
+  // instead of once per (note, candidate) pair.
+  const mentionMatchers = buildMentionMatchers(notes);
+  const cleanedContents = new Map<string, string>();
+  for (const note of notes) {
+    cleanedContents.set(note.id, cleanContentForMentions(note.content));
+  }
+
   for (const note of notes) {
     const sourceId = `note:${note.id}`;
     const { wikiLinks, tags } = extractLinksAndTags(note.content);
@@ -331,7 +377,11 @@ export function buildKnowledgeGraph(
     }
 
     // Automatic plain-text mentions of other notes' titles (or primary title entities)
-    const mentionedNotes = findPlainTextNoteMentions(note, notes);
+    const mentionedNotes = findMentionsWithMatchers(
+      cleanedContents.get(note.id) ?? '',
+      note.id,
+      mentionMatchers
+    );
     for (const targetNote of mentionedNotes) {
       const targetId = `note:${targetNote.id}`;
       const edgeId = `wikilink:${sourceId}->${targetId}`;
@@ -407,24 +457,66 @@ export function buildKnowledgeGraph(
     }
   }
 
+  // Precompute facet profiles (stem sets + clause embeddings) once per note
+  // so the all-pairs loop does not re-tokenize and re-embed every pair.
+  const facetProfiles = new Map<string, NoteFacetProfile>();
+  for (const note of notes) {
+    if (localVectors.has(note.id)) {
+      const profile = computeNoteFacetProfile(note);
+      if (profile) {
+        facetProfiles.set(note.id, profile);
+      }
+    }
+  }
+
+  // Precompute vector norms once per note; the pair loop then evaluates only
+  // dot products. Results are numerically identical to cosineSimilarity.
+  const neuralNorms = new Map<string, number>();
+  for (const note of notes) {
+    const vec = embeddings[note.id];
+    if (vec && vec.length > 0) {
+      neuralNorms.set(note.id, vectorNorm(vec));
+    }
+  }
+  const localNorms = new Map<string, number>();
+  for (const [id, vec] of localVectors) {
+    localNorms.set(id, vectorNorm(vec));
+  }
+
   // Add semantic similarity edges from neural + local + facet embeddings
   for (let i = 0; i < notes.length; i++) {
     const idA = notes[i].id;
     const vecA = embeddings[idA];
     const locA = localVectors.get(idA);
+    const profA = facetProfiles.get(idA);
     for (let j = i + 1; j < notes.length; j++) {
       const idB = notes[j].id;
       const vecB = embeddings[idB];
       const locB = localVectors.get(idB);
+      const profB = facetProfiles.get(idB);
 
       const neuralSim =
         vecA && vecB && vecA.length > 0 && vecA.length === vecB.length
-          ? cosineSimilarity(vecA, vecB)
+          ? cosineSimilarityWithNorms(
+              vecA,
+              vecB,
+              neuralNorms.get(idA) ?? 0,
+              neuralNorms.get(idB) ?? 0
+            )
           : 0;
       const localSim =
-        locA && locB && locA.length > 0 ? cosineSimilarity(locA, locB) : 0;
+        locA && locB && locA.length > 0
+          ? cosineSimilarityWithNorms(
+              locA,
+              locB,
+              localNorms.get(idA) ?? 0,
+              localNorms.get(idB) ?? 0
+            )
+          : 0;
       const facetSim =
-        locA && locB ? computeFacetSimilarity(notes[i], notes[j]) : 0;
+        locA && locB && profA && profB
+          ? facetSimilarityFromProfiles(profA, profB)
+          : 0;
       const sim = Math.max(neuralSim, localSim, facetSim);
 
       if (sim >= similarityThreshold) {
