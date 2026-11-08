@@ -29,12 +29,16 @@ not guarantees for every device.
 
 Mean of 10 samples per size, dense generated vault:
 
-| Notes | `buildKnowledgeGraph` | `getNoteConnections` | `computeForceLayout` |
-| --- | --- | --- | --- |
-| 100 | 163 ms | 92 ms | 21 ms |
-| 200 | 647 ms | 203 ms | 117 ms |
-| 300 | 947 ms | 308 ms | 209 ms |
-| 500 | 2808 ms | 793 ms | 689 ms |
+| Notes | `buildKnowledgeGraph` | `getNoteConnections` (short note) | `getNoteConnections` (long article) | `computeForceLayout` |
+| --- | --- | --- | --- | --- |
+| 100 | 163 ms | 92 ms | not measured | 21 ms |
+| 200 | 416–647 ms | 167–203 ms | 245 ms | 92–117 ms |
+| 300 | 879–947 ms | 285–308 ms | 381 ms | 206–209 ms |
+| 500 | 2808 ms | 793 ms | not measured | 689 ms |
+
+Ranges span repeat runs on a loaded machine; the long-article probe (a
+20–30-sentence note) is the expensive selection path and stays within the
+300 ms budget at the 200-note target.
 
 The target size meets the budget with headroom. **500-note vaults exceed it**:
 the remaining cost is inherently quadratic (dense clause-level cosine work in

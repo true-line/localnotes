@@ -25,7 +25,12 @@ describe('knowledge graph benchmarks', () => {
   for (const size of sizes) {
     const { notes, embeddings } = generateBenchmarkVault(size);
     const graph = buildKnowledgeGraph(notes, embeddings);
+    // The midpoint note is short (i % 5 !== 4); long articles live at
+    // i % 5 === 4, and their clause-heavy connections path is the expensive
+    // one. Benchmark both length classes so the selection budget is proven
+    // for long notes too, not just short ones.
     const probeNoteId = notes[Math.floor(size / 2)].id;
+    const longProbeNoteId = notes[4].id;
 
     describe(`${size} notes`, () => {
       bench(
@@ -40,6 +45,14 @@ describe('knowledge graph benchmarks', () => {
         'getNoteConnections',
         () => {
           getNoteConnections(probeNoteId, notes, embeddings);
+        },
+        { time: benchTimeMs }
+      );
+
+      bench(
+        'getNoteConnections (long article)',
+        () => {
+          getNoteConnections(longProbeNoteId, notes, embeddings);
         },
         { time: benchTimeMs }
       );
