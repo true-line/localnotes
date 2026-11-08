@@ -39,7 +39,8 @@ Deleting a note always asks for confirmation first.
 ## Privacy and network behavior
 
 - **No note data leaves the device** except through an agent provider endpoint you
-  explicitly configure and use. There is no telemetry.
+  explicitly configure and use, and remote images you embed yourself (see below).
+  There is no telemetry.
 - **No host permissions at install.** The manifest declares MV3
   `optional_host_permissions`; when you save a remote provider endpoint, the settings
   panel offers to grant network access to that origin only. Denying it just disables
@@ -50,6 +51,12 @@ Deleting a note always asks for confirmation first.
   no note content. Offline — or if the fetch fails — embeddings fall back to a
   deterministic local estimator, and the app stays fully usable. See
   [docs/threat-model.md](docs/threat-model.md) for the full model-provenance story.
+- **Remote images are real network requests.** Markdown image URLs are not blocked:
+  an `![alt](https://host/path)` image is fetched by the browser whenever the note (or
+  an agent reply) previews. That request discloses the image URL and ordinary viewing
+  metadata (your IP, user agent) to the host — so an image URL containing note-derived
+  data would leak it. Embed remote images only from hosts you trust; this is separate
+  from the provider and model-fetch paths above.
 - **Rendered content cannot execute.** Markdown renders without raw HTML; link URLs
   pass an allowlist (`http`, `https`, `mailto`, `tel`, relative/fragment, and the
   internal `wikilink:`/`tag:` schemes — everything else renders inert), and external
