@@ -131,7 +131,7 @@ describe('App integration', () => {
       'Some **formatted** text'
     );
     const preview = screen.getByRole('region', { name: 'Note preview' });
-    expect(within(preview).getByText('formatted')).toBeInTheDocument();
+    expect(await within(preview).findByText('formatted')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Reading' }));
     expect(screen.queryByLabelText(/note content/i)).not.toBeInTheDocument();
@@ -148,6 +148,22 @@ describe('App integration', () => {
     expect(screen.getByLabelText(/note content/i)).toHaveValue(
       'Some **formatted** text'
     );
+  });
+
+  it('keeps source input immediate while the split preview waits for a pause', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('button', { name: 'Edit + Preview' }));
+    const content = screen.getByLabelText(/note content/i);
+
+    fireEvent.change(content, { target: { value: 'A' } });
+    fireEvent.change(content, { target: { value: 'AB' } });
+
+    expect(content).toHaveValue('AB');
+    const preview = screen.getByRole('region', { name: 'Note preview' });
+    expect(within(preview).queryByText('AB')).not.toBeInTheDocument();
+    expect(await within(preview).findByText('AB')).toBeInTheDocument();
   });
 
   it('shows delete confirmation dialog when delete is triggered', async () => {
@@ -743,7 +759,9 @@ describe('App integration', () => {
     );
 
     // Click outgoing [[Relativity]] pill in Knowledge Connections to navigate back to Relativity
-    await user.click(screen.getByRole('button', { name: '[[Relativity]]' }));
+    await user.click(
+      await screen.findByRole('button', { name: '[[Relativity]]' })
+    );
     expect(screen.getByLabelText(/note title/i)).toHaveValue('Relativity');
 
     // Verify "Gravity" appears under Backlinks and Related by Topic

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Note, EmbeddingMap, EmbeddingStatus } from '../types';
 import { getNoteConnections, normalizeKey } from '../knowledgeGraph';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import '../styles/NoteConnections.css';
 
 interface Props {
@@ -33,9 +34,15 @@ export function NoteConnections({
   onReindexEmbeddings,
 }: Props) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const connectionInputs = useDebouncedValue({ note, allNotes, embeddings });
   const connections = useMemo(
-    () => getNoteConnections(note.id, allNotes, embeddings),
-    [note, allNotes, embeddings]
+    () =>
+      getNoteConnections(
+        connectionInputs.note.id,
+        connectionInputs.allNotes,
+        connectionInputs.embeddings
+      ),
+    [connectionInputs]
   );
 
   const {

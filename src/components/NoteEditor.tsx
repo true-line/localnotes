@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Note, EmbeddingMap, EmbeddingStatus } from '../types';
 import { normalizeKey } from '../knowledgeGraph';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { NoteConnections } from './NoteConnections';
 import '../styles/NoteEditor.css';
@@ -115,6 +116,7 @@ export function NoteEditor({
     [onOpenGraphNode]
   );
 
+  const debouncedContent = useDebouncedValue(note.content);
   const contentEditor = (
     <textarea
       ref={contentRef}
@@ -130,7 +132,7 @@ export function NoteEditor({
   const renderedNote = (
     <div className="note-editor__preview" role="region" aria-label="Note preview">
       <MarkdownRenderer
-        content={note.content}
+        content={mode === 'reading' ? note.content : debouncedContent}
         onWikiLinkClick={handleWikiLinkClick}
         onTagClick={handleTagClick}
       />
