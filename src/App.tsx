@@ -17,6 +17,7 @@ import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
 import { EmptyState } from './components/EmptyState';
 import { DeleteDialog } from './components/DeleteDialog';
+import { SaveFailureBanner } from './components/SaveFailureBanner';
 import { KnowledgeGraphView } from './components/KnowledgeGraphView';
 import { ChatOverlay } from './components/ChatOverlay';
 import {
@@ -34,11 +35,15 @@ export function App() {
     selectedNote,
     isLoading,
     loadError,
+    pendingWrites,
+    failedWrites,
     createNote,
     updateNote,
     deleteNote,
     selectNote,
     refreshNotes,
+    retryWrite,
+    discardFailedWrite,
   } = useNotes();
   const { embeddings, embeddingStatus, reindexEmbeddings } =
     useNoteEmbeddings(notes);
@@ -345,6 +350,11 @@ export function App() {
 
   const pendingNote = pendingDeleteId ? notes.find((n) => n.id === pendingDeleteId) : null;
 
+  // The banner shows one failure at a time; retry/discard resolves it and the
+  // next one (if any) takes its place.
+  const saveFailure = failedWrites[0] ?? null;
+  const failedNoteIds = new Set(failedWrites.map((f) => f.noteId));
+
   return (
     <div className="app">
       <NoteList
@@ -352,6 +362,8 @@ export function App() {
         selectedId={selectedId}
         isGraphOpen={isGraphOpen}
         dataStatus={dataStatus}
+        isSaving={pendingWrites > 0}
+        failedNoteIds={failedNoteIds}
         onSelect={handleSelectNote}
         onDelete={handleDeleteRequest}
         onNewNote={handleNewNote}
@@ -361,6 +373,14 @@ export function App() {
         onImportFile={handleImportFile}
       />
       <div className="app__main">
+        {saveFailure && (
+          <SaveFailureBanner
+            failure={saveFailure}
+            additionalCount={failedWrites.length - 1}
+            onRetry={retryWrite}
+            onDiscard={(noteId) => void discardFailedWrite(noteId)}
+          />
+        )}
         {isGraphOpen ? (
           <KnowledgeGraphView
             notes={notes}

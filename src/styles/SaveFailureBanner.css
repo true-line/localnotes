@@ -1,0 +1,62 @@
+.save-failure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-danger);
+  background: var(--color-surface);
+  color: var(--color-text);
+  flex-shrink: 0;
+}
+
+.save-failure__message {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.save-failure__message::before {
+  content: '⚠ ';
+  color: var(--color-danger);
+}
+
+.save-failure__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.save-failure__btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.save-failure__btn:hover {
+  border-color: var(--color-danger);
+  color: var(--color-danger-dark);
+}
+
+.save-failure__btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.save-failure__btn--primary {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+}
+
+.save-failure__btn--primary:hover {
+  background: var(--color-danger-dark);
+  border-color: var(--color-danger-dark);
+  color: #fff;
+}

@@ -4,6 +4,8 @@ import '../styles/NoteList.css';
 interface Props {
   note: Note;
   isSelected: boolean;
+  /** The latest write for this note failed to persist. */
+  saveFailed?: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
 }
@@ -13,7 +15,7 @@ function formatDate(ts: number): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export function NoteListItem({ note, isSelected, onSelect, onDelete }: Props) {
+export function NoteListItem({ note, isSelected, saveFailed = false, onSelect, onDelete }: Props) {
   const title = note.title.trim() || 'Untitled';
   const preview = note.content.slice(0, 80).replace(/\n/g, ' ');
 
@@ -36,6 +38,16 @@ export function NoteListItem({ note, isSelected, onSelect, onDelete }: Props) {
         {preview && <span className="note-list-item__preview">{preview}</span>}
         <span className="note-list-item__date">{formatDate(note.updatedAt)}</span>
       </div>
+      {saveFailed && (
+        <span
+          className="note-list-item__unsaved"
+          role="img"
+          aria-label="Changes not saved"
+          title="Changes not saved"
+        >
+          ●
+        </span>
+      )}
       <button
         className="note-list-item__delete"
         aria-label={`Delete note: ${title}`}
