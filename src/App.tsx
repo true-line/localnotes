@@ -202,7 +202,7 @@ export function App() {
     }
   }, []);
 
-  const handleImportFile = useCallback(
+  const handleImportJson = useCallback(
     async (file: File) => {
       try {
         const text = await file.text();
@@ -225,6 +225,41 @@ export function App() {
       }
     },
     [refreshNotes]
+  );
+
+  // One JSON file is a vault archive (with conflict preview); any other
+  // selection — a single file, several files, or a whole folder — imports one
+  // new note per Markdown file. Folder picks may carry other file types,
+  // which are skipped and reported rather than imported as garbage.
+  const handleImportFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 1 && files[0].name.toLowerCase().endsWith('.json')) {
+        await handleImportJson(files[0]);
+        return;
+      }
+      const markdownFiles = files.filter((file) => /\.(md|markdown)$/i.test(file.name));
+      if (markdownFiles.length === 0) {
+        setDataStatus('No Markdown files found');
+        return;
+      }
+      try {
+        for (const file of markdownFiles) {
+          const content = await file.text();
+          createNote(file.name.replace(/\.[^.]+$/, '').trim(), content);
+        }
+        const skipped = files.length - markdownFiles.length;
+        const skippedNote =
+          skipped > 0
+            ? `, skipped ${skipped} non-Markdown file${skipped === 1 ? '' : 's'}`
+            : '';
+        setDataStatus(
+          `Imported ${markdownFiles.length} note${markdownFiles.length === 1 ? '' : 's'} from Markdown${skippedNote}`
+        );
+      } catch {
+        setDataStatus('Import failed');
+      }
+    },
+    [createNote, handleImportJson]
   );
 
   const handleImportResolve = useCallback(
@@ -426,7 +461,7 @@ export function App() {
         onToggleGraph={handleToggleGraph}
         onOpenPalette={() => setIsPaletteOpen(true)}
         onExport={handleExport}
-        onImportFile={handleImportFile}
+        onImportFiles={handleImportFiles}
       />
       <div className="app__main">
         {saveFailure && (

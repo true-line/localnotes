@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../App';
 import { getRepository, resetRepositoryForTests } from '../storage';
@@ -154,6 +154,90 @@ describe('App integration', () => {
     await waitFor(() =>
       expect(screen.getByText('Imported note')).toBeInTheDocument()
     );
+  });
+
+  it('imports a single Markdown file as a new note', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    const file = new File(['# Hello\n\nSome **Markdown** content'], 'hello.md', {
+      type: 'text/markdown',
+    });
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+    fireEvent.change(screen.getByTestId('import-file-input'), {
+      target: { files: [file] },
+    });
+
+    expect(
+      await screen.findByText('Imported 1 note from Markdown')
+    ).toBeInTheDocument();
+    expect(await screen.findByText('hello')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText('Note content')).toHaveValue(
+        '# Hello\n\nSome **Markdown** content'
+      )
+    );
+  });
+
+  it('imports several Markdown files at once', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    const files = [
+      new File(['first body'], 'alpha.md'),
+      new File(['second body'], 'beta.markdown'),
+    ];
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+    fireEvent.change(screen.getByTestId('import-file-input'), {
+      target: { files },
+    });
+
+    expect(
+      await screen.findByText('Imported 2 notes from Markdown')
+    ).toBeInTheDocument();
+    const list = within(screen.getByRole('listbox', { name: 'Notes' }));
+    expect(await list.findByText('alpha')).toBeInTheDocument();
+    expect(list.getByText('beta')).toBeInTheDocument();
+  });
+
+  it('imports Markdown files from a folder and skips other file types', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    await user.click(screen.getByRole('button', { name: 'Import folder' }));
+    const files = [
+      new File(['one body'], 'one.md'),
+      new File(['not markdown'], 'image.png'),
+      new File(['two body'], 'two.markdown'),
+    ];
+    fireEvent.change(screen.getByTestId('import-folder-input'), {
+      target: { files },
+    });
+
+    expect(
+      await screen.findByText(
+        'Imported 2 notes from Markdown, skipped 1 non-Markdown file'
+      )
+    ).toBeInTheDocument();
+    const list = within(screen.getByRole('listbox', { name: 'Notes' }));
+    expect(await list.findByText('one')).toBeInTheDocument();
+    expect(list.getByText('two')).toBeInTheDocument();
+  });
+
+  it('reports a folder pick with no Markdown files', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    await user.click(screen.getByRole('button', { name: 'Import folder' }));
+    fireEvent.change(screen.getByTestId('import-folder-input'), {
+      target: { files: [new File(['plain'], 'notes.txt')] },
+    });
+
+    expect(await screen.findByText('No Markdown files found')).toBeInTheDocument();
   });
 
   const seedNote = async (id: string, title: string) => {
