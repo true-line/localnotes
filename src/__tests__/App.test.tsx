@@ -737,6 +737,36 @@ describe('App integration', () => {
     expect(currentChip).toHaveAttribute('title', expect.stringContaining('Second Note'));
   }, 15_000);
 
+  it('clears stale agent selection when switching between Raw and split modes', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note content/i), 'selectable words here');
+    fireEvent.select(screen.getByLabelText(/note content/i), {
+      target: { selectionStart: 0, selectionEnd: 9 },
+    });
+    await user.keyboard('{Meta>}j{/Meta}');
+    expect(
+      await screen.findByRole('button', { name: 'Selection' })
+    ).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'Edit + Preview' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Selection' })).toBeNull()
+    );
+
+    fireEvent.select(screen.getByLabelText(/note content/i), {
+      target: { selectionStart: 0, selectionEnd: 9 },
+    });
+    expect(
+      await screen.findByRole('button', { name: 'Selection' })
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Selection' })).toBeNull()
+    );
+  }, 15_000);
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);

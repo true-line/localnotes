@@ -56,10 +56,12 @@ export function NoteEditor({
     }, 300);
   }, [onSelectionChange]);
 
-  // Reading unmounts the textarea without any select event: the reported
-  // selection is gone, so the Selection chip must reset.
+  // Mode changes can move or unmount the textarea, dropping the browser's
+  // selection without a select event. Never keep that stale text as context.
   useEffect(() => {
-    if (mode === 'reading') onSelectionChange?.('');
+    if (prevModeRef.current !== null && prevModeRef.current !== mode) {
+      onSelectionChange?.('');
+    }
   }, [mode, onSelectionChange]);
 
   useEffect(() => {
