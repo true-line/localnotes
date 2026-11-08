@@ -213,13 +213,13 @@ export function useNotes() {
   }, []);
 
   const createNote = useCallback(
-    (initialTitle?: string | unknown) => {
+    (initialTitle?: string | unknown, initialContent?: string) => {
       const now = Date.now();
       const title = typeof initialTitle === 'string' ? initialTitle : '';
       const note: Note = {
         id: crypto.randomUUID(),
         title,
-        content: '',
+        content: typeof initialContent === 'string' ? initialContent : '',
         createdAt: now,
         updatedAt: now,
       };

@@ -21,8 +21,10 @@ no accounts, no backend, no cloud sync. Built with Vite + React 18 + TypeScript.
 - **Dark mode**: follows the system by default; manual light/dark toggle from the
   palette, persisted in settings.
 - **Data safety**: per-note IndexedDB writes with schema versioning and bounded
-  per-note revision snapshots (last 20), plus one-click JSON export/import of the
-  whole vault from the sidebar.
+  per-note revision snapshots (last 20). From the sidebar: export/import the whole
+  vault as a JSON archive (same-ID conflicts get an explicit resolution preview),
+  or import Markdown — a single `.md` file, several at once, or a whole folder;
+  each file becomes a new note titled after its filename.
 
 ## Keyboard shortcuts
 

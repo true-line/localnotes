@@ -17,7 +17,7 @@ interface Props {
   onToggleGraph?: () => void;
   onOpenPalette?: () => void;
   onExport?: () => void;
-  onImportFile?: (file: File) => void;
+  onImportFiles?: (files: File[]) => void;
 }
 
 export function NoteList({
@@ -33,9 +33,10 @@ export function NoteList({
   onToggleGraph,
   onOpenPalette,
   onExport,
-  onImportFile,
+  onImportFiles,
 }: Props) {
   const importInputRef = useRef<HTMLInputElement>(null);
+  const importFolderInputRef = useRef<HTMLInputElement>(null);
   return (
     <aside className="note-list">
       <div className="note-list__header">
@@ -92,7 +93,7 @@ export function NoteList({
           ))}
         </ul>
       )}
-      {(onExport || onImportFile) && (
+      {(onExport || onImportFiles) && (
         <div className="note-list__footer">
           {onExport && (
             <button
@@ -104,29 +105,58 @@ export function NoteList({
               Export
             </button>
           )}
-          {onImportFile && (
+          {onImportFiles && (
             <>
               <button
                 type="button"
                 className="note-list__data-btn"
                 onClick={() => importInputRef.current?.click()}
-                title="Import notes from a JSON archive"
+                title="Import notes from a JSON archive or Markdown files"
               >
                 Import
               </button>
-              {/* Programmatically driven by the button; visually hidden but
+              <button
+                type="button"
+                className="note-list__data-btn"
+                onClick={() => importFolderInputRef.current?.click()}
+                title="Import every Markdown file in a folder"
+              >
+                Import folder
+              </button>
+              {/* Programmatically driven by the buttons; visually hidden but
                   not display:none so the click() path stays valid */}
               <input
                 ref={importInputRef}
                 type="file"
-                accept="application/json,.json"
+                accept="application/json,.json,.md,.markdown"
+                multiple
                 className="note-list__import-input"
                 data-testid="import-file-input"
                 aria-hidden="true"
                 tabIndex={-1}
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onImportFile(file);
+                  const files = Array.from(e.target.files ?? []);
+                  if (files.length > 0) onImportFiles(files);
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={importFolderInputRef}
+                type="file"
+                multiple
+                // Folder selection is a Chromium-supported, non-standard
+                // attribute; React has no typed prop for it.
+                {...({ webkitdirectory: '' } as object)}
+                className="note-list__import-input"
+                data-testid="import-folder-input"
+                aria-hidden="true"
+                tabIndex={-1}
+                onChange={(e) => {
+                  // Folder picks report even an empty selection: an empty
+                  // folder must surface "No Markdown files found" instead of
+                  // silently doing nothing. (The file picker above treats
+                  // empty as a canceled dialog and stays quiet.)
+                  onImportFiles(Array.from(e.target.files ?? []));
                   e.target.value = '';
                 }}
               />
