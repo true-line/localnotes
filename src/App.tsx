@@ -53,6 +53,7 @@ export function App() {
     loadError,
     pendingWrites,
     failedWrites,
+    savedNoteCount,
     createNote,
     updateNote,
     deleteNote,
@@ -455,6 +456,7 @@ export function App() {
         isGraphOpen={isGraphOpen}
         isCollapsed={isSidebarCollapsed}
         dataStatus={dataStatus}
+        savedNoteCount={savedNoteCount}
         isSaving={pendingWrites > 0}
         failedNoteIds={failedNoteIds}
         onSelect={handleSelectNote}

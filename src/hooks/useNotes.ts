@@ -31,6 +31,8 @@ export function useNotes() {
   const [loadError, setLoadError] = useState<unknown>(null);
   const [pendingWrites, setPendingWrites] = useState(0);
   const [failedWrites, setFailedWrites] = useState<FailedWrite[]>([]);
+  const [savedNoteCount, setSavedNoteCount] = useState(0);
+  const durableNoteIdsRef = useRef(new Set<string>());
   // Bumped on every local mutation; async refreshes compare against it so a
   // read that raced with an edit never overwrites newer optimistic state.
   const mutationCountRef = useRef(0);
@@ -52,6 +54,8 @@ export function useNotes() {
         if (mutationCountRef.current === 0) {
           setNotes(sortByUpdated(all));
         }
+        durableNoteIdsRef.current = new Set(all.map((note) => note.id));
+        setSavedNoteCount(durableNoteIdsRef.current.size);
         setIsLoading(false);
       } catch (err) {
         // Storage is unavailable or the legacy migration failed; the vault
@@ -85,6 +89,12 @@ export function useNotes() {
       getRepository()
         .then(op)
         .then(() => {
+          if (kind === 'delete') {
+            durableNoteIdsRef.current.delete(noteId);
+          } else {
+            durableNoteIdsRef.current.add(noteId);
+          }
+          setSavedNoteCount(durableNoteIdsRef.current.size);
           if (failedOpsRef.current.delete(noteId)) {
             setFailedWrites((prev) =>
               prev.filter((f) => f.noteId !== noteId)
@@ -126,6 +136,8 @@ export function useNotes() {
       return;
     }
     setNotes(sortByUpdated(all));
+    durableNoteIdsRef.current = new Set(all.map((note) => note.id));
+    setSavedNoteCount(durableNoteIdsRef.current.size);
   }, []);
 
   /**
@@ -281,6 +293,7 @@ export function useNotes() {
     loadError,
     pendingWrites,
     failedWrites,
+    savedNoteCount,
     createNote,
     updateNote,
     deleteNote,
