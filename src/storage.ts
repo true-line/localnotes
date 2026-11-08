@@ -60,7 +60,31 @@ export interface ExportArchive {
 }
 
 export interface ImportResult {
+  /** Notes written under a new id (archive additions plus 'duplicate' resolutions). */
   imported: number;
+  /** Conflicting notes replaced by the archive version (existing snapshotted first). */
+  replaced: number;
+  /** Conflicting notes left untouched. */
+  kept: number;
+  /** Archive entries skipped because they are not note-shaped. */
+  skipped: number;
+}
+
+/** How to resolve an imported note whose id already exists in the vault. */
+export type ImportConflictResolution = 'keep' | 'replace' | 'duplicate';
+
+export interface ImportConflict {
+  /** The note currently in the vault. */
+  existing: Note;
+  /** The archive note with the same id. */
+  incoming: Note;
+}
+
+export interface ImportPreview {
+  /** Valid archive notes whose ids do not exist in the vault. */
+  additions: Note[];
+  conflicts: ImportConflict[];
+  /** Archive entries that are not note-shaped. */
   skipped: number;
 }
 
@@ -595,13 +619,22 @@ export async function exportVault(): Promise<ExportArchive> {
   };
 }
 
+interface ParsedArchive {
+  /** Valid, note-shaped entries only. */
+  notes: Note[];
+  /** Revision lists keyed by note id (lists that are not arrays are dropped). */
+  revisions: Record<string, NoteRevision[]>;
+  /** Entries dropped because they are not note-shaped. */
+  skipped: number;
+}
+
 /**
- * Imports a JSON archive, merging by note id (upsert) so an import can never
- * silently destroy existing notes. Malformed archives throw with a plain
- * message (the caller prefixes context); invalid entries are skipped and
- * counted.
+ * Parses and validates an archive without touching the vault. Throws with a
+ * plain message on malformed input (the caller prefixes context). Only the
+ * archive version this build writes is accepted: importing a newer format
+ * blindly could silently drop fields it introduced.
  */
-export async function importVault(text: string): Promise<ImportResult> {
+function parseArchive(text: string): ParsedArchive {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -615,23 +648,138 @@ export async function importVault(text: string): Promise<ImportResult> {
   if (archive.app !== 'localnotes' || !Array.isArray(archive.notes)) {
     throw new Error('not a LocalNotes archive');
   }
+  if (archive.version !== 1) {
+    throw new Error(`unsupported archive version: ${String(archive.version)}`);
+  }
 
   const candidates = archive.notes as unknown[];
   const valid = candidates.filter(isNote);
+  // Duplicate ids inside one archive would be misclassified as independent
+  // additions (last write wins) or as indistinguishable conflicts, so the
+  // archive is rejected before anything is previewed or committed.
+  const seenIds = new Set<string>();
+  for (const note of valid) {
+    if (seenIds.has(note.id)) {
+      throw new Error(`archive contains duplicate note id: ${note.id}`);
+    }
+    seenIds.add(note.id);
+  }
+  const revisions: Record<string, NoteRevision[]> = {};
+  const rawRevisions = archive.revisions;
+  if (
+    rawRevisions &&
+    typeof rawRevisions === 'object' &&
+    !Array.isArray(rawRevisions)
+  ) {
+    for (const [noteId, list] of Object.entries(
+      rawRevisions as Record<string, unknown>
+    )) {
+      if (Array.isArray(list)) revisions[noteId] = list as NoteRevision[];
+    }
+  }
+  return { notes: valid, revisions, skipped: candidates.length - valid.length };
+}
+
+/**
+ * Validates an archive and reports what importing it would do, without
+ * writing anything. Callers show the conflicts to the user and then commit
+ * with importVault plus explicit per-note resolutions.
+ */
+export async function previewImport(text: string): Promise<ImportPreview> {
+  const archive = parseArchive(text);
   const repo = await getRepository();
   await repo.flushWrites();
-  await repo.putNotes(valid);
+  const existingById = new Map(
+    (await repo.getAllNotes()).map((note) => [note.id, note])
+  );
+  const additions: Note[] = [];
+  const conflicts: ImportConflict[] = [];
+  for (const note of archive.notes) {
+    const existing = existingById.get(note.id);
+    if (existing) {
+      conflicts.push({ existing, incoming: note });
+    } else {
+      additions.push(note);
+    }
+  }
+  return { additions, conflicts, skipped: archive.skipped };
+}
 
-  const importedIds = new Set(valid.map((note) => note.id));
-  const revisions = archive.revisions;
-  if (revisions && typeof revisions === 'object' && !Array.isArray(revisions)) {
-    for (const [noteId, list] of Object.entries(
-      revisions as Record<string, unknown>
-    )) {
-      if (!importedIds.has(noteId) || !Array.isArray(list)) continue;
-      await repo.replaceRevisions(noteId, list as NoteRevision[]);
+/**
+ * Imports a JSON archive, merging by note id. Non-conflicting notes import
+ * normally. A note whose id already exists in the vault is NEVER overwritten
+ * silently: without an explicit entry in `resolutions` it is kept as-is.
+ *
+ * Revision handling per resolution:
+ * - keep: the existing note and its revisions are untouched; the archive's
+ *   revisions for that note are discarded.
+ * - replace: the existing note is snapshotted into its revision history
+ *   first (so an approved overwrite stays recoverable), then the incoming
+ *   note is written; the vault's own revision history is kept and the
+ *   archive's revisions for that note are discarded.
+ * - duplicate: the incoming note is written under a fresh id with no
+ *   revision history, leaving the existing note untouched.
+ */
+export async function importVault(
+  text: string,
+  resolutions: Record<string, ImportConflictResolution> = {}
+): Promise<ImportResult> {
+  const archive = parseArchive(text);
+  const repo = await getRepository();
+  await repo.flushWrites();
+  const existingById = new Map(
+    (await repo.getAllNotes()).map((note) => [note.id, note])
+  );
+
+  const additions: Note[] = [];
+  const conflicts: ImportConflict[] = [];
+  for (const note of archive.notes) {
+    const existing = existingById.get(note.id);
+    if (existing) {
+      conflicts.push({ existing, incoming: note });
+    } else {
+      additions.push(note);
     }
   }
 
-  return { imported: valid.length, skipped: candidates.length - valid.length };
+  await repo.putNotes(additions);
+
+  // Archive revisions attach only to notes imported as additions; conflict
+  // resolutions manage their own history (see the docstring above).
+  const importedIds = new Set(additions.map((note) => note.id));
+  for (const [noteId, list] of Object.entries(archive.revisions)) {
+    if (!importedIds.has(noteId)) continue;
+    await repo.replaceRevisions(noteId, list);
+  }
+
+  const takenIds = new Set([
+    ...existingById.keys(),
+    ...archive.notes.map((note) => note.id),
+  ]);
+  let replaced = 0;
+  let kept = 0;
+  let duplicated = 0;
+  for (const conflict of conflicts) {
+    const resolution = resolutions[conflict.incoming.id] ?? 'keep';
+    if (resolution === 'replace') {
+      await repo.snapshotRevision(conflict.existing);
+      await repo.putNote(conflict.incoming);
+      replaced += 1;
+    } else if (resolution === 'duplicate') {
+      let id = crypto.randomUUID();
+      while (takenIds.has(id)) id = crypto.randomUUID();
+      takenIds.add(id);
+      await repo.putNote({ ...conflict.incoming, id });
+      duplicated += 1;
+    } else {
+      kept += 1;
+    }
+  }
+
+  return {
+    imported: additions.length + duplicated,
+    replaced,
+    kept,
+    skipped: archive.skipped,
+  };
 }

@@ -4,6 +4,7 @@ import {
   getRepository,
   exportVault,
   importVault,
+  previewImport,
   resetRepositoryForTests,
   createWriteQueue,
   REVISION_CAP_PER_NOTE,
@@ -228,7 +229,7 @@ describe('export/import', () => {
     (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
     resetRepositoryForTests();
     const result = await importVault(JSON.stringify(archive));
-    expect(result).toEqual({ imported: 2, skipped: 0 });
+    expect(result).toEqual({ imported: 2, replaced: 0, kept: 0, skipped: 0 });
 
     const freshRepo = await getRepository();
     const notes = await freshRepo.getAllNotes();
@@ -237,22 +238,137 @@ describe('export/import', () => {
     expect(revisions.map((r) => r.snapshot.title)).toEqual(['old a']);
   });
 
-  it('merges by id without destroying existing notes', async () => {
+  it('never overwrites a conflicting note without an explicit resolution', async () => {
     const repo = await getRepository();
-    await repo.putNote(makeNote('existing'));
+    await repo.putNote(makeNote('existing', { title: 'current' }));
 
     const result = await importVault(
       JSON.stringify({
         app: 'localnotes',
         version: 1,
         exportedAt: 1,
-        notes: [makeNote('existing', { title: 'overwritten' }), makeNote('new')],
+        notes: [makeNote('existing', { title: 'incoming' }), makeNote('new')],
       })
     );
-    expect(result.imported).toBe(2);
+    expect(result).toEqual({ imported: 1, replaced: 0, kept: 1, skipped: 0 });
     const notes = await repo.getAllNotes();
     expect(notes).toHaveLength(2);
-    expect(notes.find((n) => n.id === 'existing')?.title).toBe('overwritten');
+    expect(notes.find((n) => n.id === 'existing')?.title).toBe('current');
+  });
+
+  it('previews additions and conflicts without writing anything', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote('existing', { title: 'current' }));
+
+    const preview = await previewImport(
+      JSON.stringify({
+        app: 'localnotes',
+        version: 1,
+        exportedAt: 1,
+        notes: [
+          makeNote('existing', { title: 'incoming' }),
+          makeNote('new'),
+          { junk: true },
+        ],
+      })
+    );
+    expect(preview.additions.map((n) => n.id)).toEqual(['new']);
+    expect(preview.conflicts).toHaveLength(1);
+    expect(preview.conflicts[0].existing.title).toBe('current');
+    expect(preview.conflicts[0].incoming.title).toBe('incoming');
+    expect(preview.skipped).toBe(1);
+
+    // Preview is read-only
+    const notes = await repo.getAllNotes();
+    expect(notes).toHaveLength(1);
+    expect(notes[0].title).toBe('current');
+  });
+
+  it("resolution 'keep' leaves the existing note and revisions untouched", async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote('existing', { title: 'current' }));
+    await repo.snapshotRevision(makeNote('existing', { title: 'previous' }));
+
+    const result = await importVault(
+      JSON.stringify({
+        app: 'localnotes',
+        version: 1,
+        exportedAt: 1,
+        notes: [makeNote('existing', { title: 'incoming' })],
+        revisions: {
+          existing: [
+            {
+              noteId: 'existing',
+              snapshot: makeNote('existing', { title: 'archive rev' }),
+              at: 10,
+            },
+          ],
+        },
+      }),
+      { existing: 'keep' }
+    );
+    expect(result).toEqual({ imported: 0, replaced: 0, kept: 1, skipped: 0 });
+    const notes = await repo.getAllNotes();
+    expect(notes.find((n) => n.id === 'existing')?.title).toBe('current');
+    const revisions = await repo.getRevisions('existing');
+    expect(revisions.map((r) => r.snapshot.title)).toEqual(['previous']);
+  });
+
+  it("resolution 'replace' snapshots the current note before overwriting", async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote('existing', { title: 'current' }));
+
+    const result = await importVault(
+      JSON.stringify({
+        app: 'localnotes',
+        version: 1,
+        exportedAt: 1,
+        notes: [makeNote('existing', { title: 'incoming' })],
+      }),
+      { existing: 'replace' }
+    );
+    expect(result).toEqual({ imported: 0, replaced: 1, kept: 0, skipped: 0 });
+    const notes = await repo.getAllNotes();
+    expect(notes.find((n) => n.id === 'existing')?.title).toBe('incoming');
+    // The replaced version survives as the newest revision.
+    const revisions = await repo.getRevisions('existing');
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0].snapshot.title).toBe('current');
+  });
+
+  it("resolution 'duplicate' imports a copy under a fresh id with no history", async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote('existing', { title: 'current' }));
+
+    const result = await importVault(
+      JSON.stringify({
+        app: 'localnotes',
+        version: 1,
+        exportedAt: 1,
+        notes: [makeNote('existing', { title: 'incoming' })],
+        revisions: {
+          existing: [
+            {
+              noteId: 'existing',
+              snapshot: makeNote('existing', { title: 'archive rev' }),
+              at: 10,
+            },
+          ],
+        },
+      }),
+      { existing: 'duplicate' }
+    );
+    expect(result).toEqual({ imported: 1, replaced: 0, kept: 0, skipped: 0 });
+    const notes = await repo.getAllNotes();
+    expect(notes).toHaveLength(2);
+    const original = notes.find((n) => n.id === 'existing');
+    const copy = notes.find((n) => n.id !== 'existing');
+    expect(original?.title).toBe('current');
+    expect(copy?.title).toBe('incoming');
+    expect(copy?.id).not.toBe('existing');
+    // The copy starts with a clean revision history.
+    expect(await repo.getRevisions(copy!.id)).toEqual([]);
+    expect(await repo.getRevisions('existing')).toEqual([]);
   });
 
   it('counts skipped invalid entries', async () => {
@@ -264,7 +380,44 @@ describe('export/import', () => {
         notes: [makeNote('a'), { junk: true }, null],
       })
     );
-    expect(result).toEqual({ imported: 1, skipped: 2 });
+    expect(result).toEqual({ imported: 1, replaced: 0, kept: 0, skipped: 2 });
+  });
+
+  it('rejects unsupported archive versions without writing anything', async () => {
+    const repo = await getRepository();
+    const archive = (version: unknown) =>
+      JSON.stringify({
+        app: 'localnotes',
+        version,
+        exportedAt: 1,
+        notes: [makeNote('a')],
+      });
+    await expect(importVault(archive(2))).rejects.toThrow(
+      /unsupported archive version/
+    );
+    await expect(importVault(archive(undefined))).rejects.toThrow(
+      /unsupported archive version/
+    );
+    await expect(previewImport(archive(2))).rejects.toThrow(
+      /unsupported archive version/
+    );
+    expect(await repo.getAllNotes()).toEqual([]);
+  });
+
+  it('rejects archives containing duplicate note ids without writing anything', async () => {
+    const repo = await getRepository();
+    const archive = JSON.stringify({
+      app: 'localnotes',
+      version: 1,
+      exportedAt: 1,
+      notes: [
+        makeNote('a', { title: 'first copy' }),
+        makeNote('a', { title: 'second copy' }),
+      ],
+    });
+    await expect(importVault(archive)).rejects.toThrow(/duplicate note id: a/);
+    await expect(previewImport(archive)).rejects.toThrow(/duplicate note id: a/);
+    expect(await repo.getAllNotes()).toEqual([]);
   });
 
   it('throws on malformed archives', async () => {

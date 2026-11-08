@@ -156,6 +156,137 @@ describe('App integration', () => {
     );
   });
 
+  const seedNote = async (id: string, title: string) => {
+    const repo = await getRepository();
+    await repo.putNote({
+      id,
+      title,
+      content: `content of ${id}`,
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    await repo.flushWrites();
+  };
+
+  const conflictArchive = () =>
+    new File(
+      [
+        JSON.stringify({
+          app: 'localnotes',
+          version: 1,
+          exportedAt: 1,
+          notes: [
+            {
+              id: 'dup',
+              title: 'Archive title',
+              content: 'archive content',
+              createdAt: 1,
+              updatedAt: 3,
+            },
+            {
+              id: 'fresh',
+              title: 'Fresh note',
+              content: 'new',
+              createdAt: 1,
+              updatedAt: 3,
+            },
+          ],
+        }),
+      ],
+      'vault.json',
+      { type: 'application/json' }
+    );
+
+  it('keeps conflicting notes by default and imports the rest', async () => {
+    const user = userEvent.setup();
+    await seedNote('dup', 'Current title');
+    render(<App />);
+    await screen.findByText('Current title');
+
+    fireEvent.change(screen.getByTestId('import-file-input'), {
+      target: { files: [conflictArchive()] },
+    });
+    const dialog = await screen.findByRole('dialog', {
+      name: /resolve import conflicts/i,
+    });
+    // The safe default is preselected
+    expect(
+      screen.getByRole('radio', { name: /keep existing/i })
+    ).toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(dialog).not.toBeInTheDocument();
+    expect(
+      await screen.findByText('Imported 1 note, kept 1 existing')
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText('Fresh note')).toBeInTheDocument()
+    );
+    expect(screen.getByText('Current title')).toBeInTheDocument();
+    expect(screen.queryByText('Archive title')).not.toBeInTheDocument();
+  });
+
+  it('replaces a conflicting note only when the user chooses Replace', async () => {
+    const user = userEvent.setup();
+    await seedNote('dup', 'Current title');
+    render(<App />);
+    await screen.findByText('Current title');
+
+    fireEvent.change(screen.getByTestId('import-file-input'), {
+      target: { files: [conflictArchive()] },
+    });
+    await screen.findByRole('dialog', { name: /resolve import conflicts/i });
+    await user.click(
+      screen.getByRole('radio', { name: /replace with imported/i })
+    );
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(
+      await screen.findByText('Imported 1 note, replaced 1 existing')
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText('Archive title')).toBeInTheDocument()
+    );
+    expect(screen.queryByText('Current title')).not.toBeInTheDocument();
+  });
+
+  it('cancelling the conflict dialog imports nothing', async () => {
+    const user = userEvent.setup();
+    await seedNote('dup', 'Current title');
+    render(<App />);
+    await screen.findByText('Current title');
+
+    fireEvent.change(screen.getByTestId('import-file-input'), {
+      target: { files: [conflictArchive()] },
+    });
+    await screen.findByRole('dialog', { name: /resolve import conflicts/i });
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(await screen.findByText('Import canceled')).toBeInTheDocument();
+    expect(screen.getByText('Current title')).toBeInTheDocument();
+    expect(screen.queryByText('Fresh note')).not.toBeInTheDocument();
+  });
+
+  it('closes the conflict dialog with Escape without writing anything', async () => {
+    const user = userEvent.setup();
+    await seedNote('dup', 'Current title');
+    render(<App />);
+    await screen.findByText('Current title');
+
+    fireEvent.change(screen.getByTestId('import-file-input'), {
+      target: { files: [conflictArchive()] },
+    });
+    await screen.findByRole('dialog', { name: /resolve import conflicts/i });
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const repo = await getRepository();
+    const notes = await repo.getAllNotes();
+    expect(notes).toHaveLength(1);
+    expect(notes[0].title).toBe('Current title');
+  });
+
   it('shows a recoverable error screen when the database cannot open', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     (globalThis as { indexedDB?: unknown }).indexedDB = {
