@@ -12,12 +12,18 @@ import { fuzzyScore } from './fuzzyMatch';
 import { getNoteConnections } from './knowledgeGraph';
 import type { ContextAttachment } from './agent/types';
 import { normalizeKey } from './knowledgeGraph';
-import { exportVault, importVault } from './storage';
+import { exportVault, importVault, previewImport } from './storage';
+import type {
+  ImportConflictResolution,
+  ImportPreview,
+  ImportResult,
+} from './storage';
 import { NoteList } from './components/NoteList';
 import { NoteEditor } from './components/NoteEditor';
 import { EmptyState } from './components/EmptyState';
 import { DeleteDialog } from './components/DeleteDialog';
 import { SaveFailureBanner } from './components/SaveFailureBanner';
+import { ImportConflictDialog } from './components/ImportConflictDialog';
 import { KnowledgeGraphView } from './components/KnowledgeGraphView';
 import { ChatOverlay } from './components/ChatOverlay';
 import {
@@ -27,6 +33,16 @@ import {
 import './styles/App.css';
 
 const DATA_STATUS_CLEAR_MS = 5000;
+
+function importStatusMessage(result: ImportResult): string {
+  const parts = [
+    `Imported ${result.imported} note${result.imported === 1 ? '' : 's'}`,
+  ];
+  if (result.replaced > 0) parts.push(`replaced ${result.replaced} existing`);
+  if (result.kept > 0) parts.push(`kept ${result.kept} existing`);
+  if (result.skipped > 0) parts.push(`skipped ${result.skipped} invalid`);
+  return parts.join(', ');
+}
 
 export function App() {
   const {
@@ -52,6 +68,10 @@ export function App() {
   const [isGraphOpen, setIsGraphOpen] = useState(false);
   const [graphFocusNodeId, setGraphFocusNodeId] = useState<string | null>(null);
   const [dataStatus, setDataStatus] = useState<string | null>(null);
+  const [pendingImport, setPendingImport] = useState<{
+    text: string;
+    preview: ImportPreview;
+  } | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [selectionText, setSelectionText] = useState('');
@@ -185,10 +205,17 @@ export function App() {
   const handleImportFile = useCallback(
     async (file: File) => {
       try {
-        const result = await importVault(await file.text());
+        const text = await file.text();
+        const preview = await previewImport(text);
+        if (preview.conflicts.length > 0) {
+          // Same-id notes need an explicit per-note decision before anything
+          // is written; the dialog owns that choice.
+          setPendingImport({ text, preview });
+          return;
+        }
+        const result = await importVault(text);
         await refreshNotes();
-        const count = result.imported;
-        setDataStatus(`Imported ${count} note${count === 1 ? '' : 's'}`);
+        setDataStatus(importStatusMessage(result));
       } catch (err) {
         setDataStatus(
           err instanceof Error && err.message
@@ -199,6 +226,31 @@ export function App() {
     },
     [refreshNotes]
   );
+
+  const handleImportResolve = useCallback(
+    async (resolutions: Record<string, ImportConflictResolution>) => {
+      const pending = pendingImport;
+      setPendingImport(null);
+      if (!pending) return;
+      try {
+        const result = await importVault(pending.text, resolutions);
+        await refreshNotes();
+        setDataStatus(importStatusMessage(result));
+      } catch (err) {
+        setDataStatus(
+          err instanceof Error && err.message
+            ? `Import failed: ${err.message}`
+            : 'Import failed'
+        );
+      }
+    },
+    [pendingImport, refreshNotes]
+  );
+
+  const handleImportCancel = useCallback(() => {
+    setPendingImport(null);
+    setDataStatus('Import canceled');
+  }, []);
 
   const handleDeleteRequest = useCallback((id: string) => {
     setPendingDeleteId(id);
@@ -265,10 +317,14 @@ export function App() {
     },
     onEscape: () => {
       // Topmost layer first: palette self-handles Escape, then chat, then
-      // the delete dialog.
+      // the import dialog, then the delete dialog.
       if (isPaletteOpen) return;
       if (isChatOpen) {
         setIsChatOpen(false);
+        return;
+      }
+      if (pendingImport) {
+        setPendingImport(null);
         return;
       }
       if (pendingDeleteId) setPendingDeleteId(null);
@@ -415,6 +471,13 @@ export function App() {
           noteTitle={pendingNote.title}
           onConfirm={handleDeleteConfirm}
           onCancel={handleDeleteCancel}
+        />
+      )}
+      {pendingImport && (
+        <ImportConflictDialog
+          conflicts={pendingImport.preview.conflicts}
+          onResolve={handleImportResolve}
+          onCancel={handleImportCancel}
         />
       )}
       <CommandPalette
