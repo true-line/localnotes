@@ -28,7 +28,7 @@ inherit by default, vary by explicit delta).
 ## What is specific to this repository
 
 - **Product boundary:** Localnotes is a single-user, browser-only notes app.
-  Note data stays in browser `localStorage`; do not add a backend, account,
+  Note data stays on device in IndexedDB; do not add a backend, account,
   cloud-sync, or note-data network path. Scope and acceptance criteria live in
   [the MVP plan](docs/notes-mvp-plan.md).
 - **Persistence boundary:** all note persistence goes through

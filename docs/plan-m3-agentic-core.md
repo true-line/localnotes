@@ -4,19 +4,29 @@ Implements [#39](https://github.com/true-line/localnotes/issues/39) per
 [docs/roadmap.md](roadmap.md) Phase 2 steps A+B. Shipped as **two PRs** (A: provider core
 + chat UI; B: tools + context chips) so review stays tractable.
 
-## 0. Implementation status (2026-10-29)
+## 0. Implementation status (2026-11-07)
 
-**PR A shipped** (#50): runtime, registry, mock provider, session hook, ChatOverlay
+**PR A shipped** (#50, v0.2.0): runtime, registry, mock provider, session hook, ChatOverlay
 (Cmd+J), shortcuts — with review-round amendments beyond this plan: wikilinks in replies
 navigate find-or-create, Escape layering centralized (palette > chat > delete dialog),
 palette blocks chat focus-stealing, retry control exposed via `canRetry`.
 
-**Drift vs this plan:** the mock provider does not yet emit `tool-call` events — the
-tool-execution demo (§6) lands with PR B's tools, not before. Tool loop in the runtime
-is already live and tested (§8 runtime tests), so PR B is additive.
+**PR B shipped** (v0.3.0): the five tier-0 tools (`notes.search`, `notes.read`,
+`notes.recent`, `graph.connections`, `graph.similar`) with schema-validated arguments, the
+collapsible tool transcript, and the four context chips — all per §4–§8.
+
+**Drift resolved:** an earlier revision of this status noted that the mock provider did
+not yet emit `tool-call` events. It now does: a message that looks like a search triggers
+a genuine `notes.search` call, and the follow-up turn summarizes the real vault results —
+the §6 demo is live, not a stub.
 
 **Also shipped post-plan:** the changesets release pipeline (v0.2.1 published) — M3 PRs
-now carry changesets per repo convention.
+now carry changesets per repo convention. Beyond M3, the M4 slices have landed too: the
+OpenAI-compatible provider (Ollama, LM Studio, vLLM, OpenAI) with per-origin
+`optional_host_permissions` grants and persisted provider settings (v0.4.0), and the
+bounded local audit log plus egress-host badge (v0.5.0). The Anthropic provider
+([#40](https://github.com/true-line/localnotes/issues/40)) and tiers 1–2
+([#41](https://github.com/true-line/localnotes/issues/41)) remain open.
 
 ## 1. Goal and guardrails
 
