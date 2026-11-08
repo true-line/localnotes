@@ -40,7 +40,7 @@ jobs:
           task: Install locked dependencies
           executable: npm
           arguments-json: '["ci"]'
-          timeout-seconds: '600'
+          timeout-seconds: '300'
           attempts: '2'
           retry-delay-seconds: '5'
       - run: npm run build
@@ -50,7 +50,7 @@ jobs:
           task: Install Chromium and its system dependencies
           executable: npx
           arguments-json: '["playwright", "install", "--with-deps", "chromium"]'
-          timeout-seconds: '600'
+          timeout-seconds: '300'
           attempts: '2'
           retry-delay-seconds: '5'
       - name: Web integration tests
