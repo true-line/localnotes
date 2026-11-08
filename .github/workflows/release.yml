@@ -39,7 +39,7 @@ jobs:
           # A release job never restores a cache another run could have written.
           package-manager-cache: false
       - name: Authorize direct workflow event
-        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@b1c6bf80380f35e83168bcbef5b86d89b0d652e3
+        uses: true-line/trueline-agent-ci/.github/actions/ci-policy@85ce985f27900fa3c7456d95575fd66b4d4966b7
         with:
           authorization-only: 'true'
 
@@ -174,7 +174,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install locked dependencies
-        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@b1c6bf80380f35e83168bcbef5b86d89b0d652e3
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@85ce985f27900fa3c7456d95575fd66b4d4966b7
         with:
           task: Install locked dependencies
           executable: npm
