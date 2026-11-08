@@ -5,17 +5,34 @@
   flex-shrink: 0;
 }
 
+.note-connections--collapsed {
+  padding-bottom: 16px;
+}
+
 .note-connections__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
+}
+
+.note-connections--collapsed .note-connections__header {
+  margin-bottom: 0;
 }
 
 .note-connections__title-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.note-connections__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .note-connections__title {
@@ -82,6 +99,10 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
+}
+
+.note-connections__grid[hidden] {
+  display: none;
 }
 
 .note-connections__group {

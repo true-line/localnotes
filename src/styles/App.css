@@ -4,6 +4,10 @@
   min-height: 100vh;
 }
 
+.app--sidebar-collapsed {
+  grid-template-columns: 48px 1fr;
+}
+
 .app__main {
   min-width: 0;
   overflow-x: auto;

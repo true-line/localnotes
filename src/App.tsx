@@ -74,6 +74,7 @@ export function App() {
   } | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectionText, setSelectionText] = useState('');
 
   // The Selection chip must reflect the CURRENT note: switching notes (or
@@ -447,11 +448,12 @@ export function App() {
   const failedNoteIds = new Set(failedWrites.map((f) => f.noteId));
 
   return (
-    <div className="app">
+    <div className={`app${isSidebarCollapsed ? ' app--sidebar-collapsed' : ''}`}>
       <NoteList
         notes={notes}
         selectedId={selectedId}
         isGraphOpen={isGraphOpen}
+        isCollapsed={isSidebarCollapsed}
         dataStatus={dataStatus}
         isSaving={pendingWrites > 0}
         failedNoteIds={failedNoteIds}
@@ -459,6 +461,7 @@ export function App() {
         onDelete={handleDeleteRequest}
         onNewNote={handleNewNote}
         onToggleGraph={handleToggleGraph}
+        onToggleCollapse={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
         onOpenPalette={() => setIsPaletteOpen(true)}
         onExport={handleExport}
         onImportFiles={handleImportFiles}
