@@ -152,8 +152,11 @@ export function NoteList({
                 aria-hidden="true"
                 tabIndex={-1}
                 onChange={(e) => {
-                  const files = Array.from(e.target.files ?? []);
-                  if (files.length > 0) onImportFiles(files);
+                  // Folder picks report even an empty selection: an empty
+                  // folder must surface "No Markdown files found" instead of
+                  // silently doing nothing. (The file picker above treats
+                  // empty as a canceled dialog and stays quiet.)
+                  onImportFiles(Array.from(e.target.files ?? []));
                   e.target.value = '';
                 }}
               />

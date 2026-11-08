@@ -240,6 +240,19 @@ describe('App integration', () => {
     expect(await screen.findByText('No Markdown files found')).toBeInTheDocument();
   });
 
+  it('reports an empty folder pick instead of doing nothing', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+
+    await user.click(screen.getByRole('button', { name: 'Import folder' }));
+    fireEvent.change(screen.getByTestId('import-folder-input'), {
+      target: { files: [] },
+    });
+
+    expect(await screen.findByText('No Markdown files found')).toBeInTheDocument();
+  });
+
   const seedNote = async (id: string, title: string) => {
     const repo = await getRepository();
     await repo.putNote({
