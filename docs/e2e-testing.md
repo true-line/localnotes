@@ -37,7 +37,7 @@ xvfb-run -a npx playwright test --project=extension
 | Spec | Project | What it proves |
 | --- | --- | --- |
 | `vault.extension.spec.ts` | extension | New-tab override, create/edit/reload/delete against real Chromium IndexedDB, JSON export download and file import |
-| `permissions.extension.spec.ts` | extension | No host permissions at install; endpoint fetch blocked before a grant; real `chrome.permissions.request` grant enables the endpoint |
+| `permissions.extension.spec.ts` | extension | No host permissions at install and endpoint fetch blocked without a grant (CI); interactive grant and denial through the app's "Grant network access" button (see below) |
 | `provider-contract.web.spec.ts` | web | Streaming SSE, tool-schema advertising, and a multi-round tool-call loop against a local OpenAI-compatible server started by the test (no external network) |
 | `embeddings.web.spec.ts` | web | Real MiniLM download (384-dim vectors), network-unavailable fallback to deterministic 256-dim local embeddings, cached offline restart with zero model-host requests, and no note content in any request |
 | `keyboard.web.spec.ts` | web | Palette, delete dialog, and agent drawer keyboard/focus smoke path |
@@ -48,12 +48,19 @@ Two deliberate testing choices:
   needs internet access. The fallback and cached-startup tests block the model
   hosts at the browser network layer instead of mocking application code.
 - Chromium's native permission and new-tab-override bubbles cannot be clicked
-  by browser automation. Permission denial is therefore verified as real
-  behavior (no grant persisted, endpoint unreachable), and the grant runs
-  through the real `chrome.permissions.request` API — the same call the app's
-  "Grant network access" button makes. Under `--deny-permission-prompts`
-  Chromium auto-resolves extension optional-host prompts as a grant, which
-  keeps the grant test deterministic.
+  by browser automation, and no supported switch auto-accepts extension
+  optional-host prompts. The deterministic CI test therefore covers the
+  un-granted state (no permission persisted, endpoint unreachable). The full
+  grant and denial flows through the app's "Grant network access" button run
+  **interactively**, locally:
+
+  ```sh
+  E2E_INTERACTIVE_PROMPTS=1 npx playwright test --project=extension
+  ```
+
+  Click **Allow** (grant test) or **Deny** (denial test) when Chromium's
+  native bubble appears; the tests wait up to two minutes for the click and
+  then assert the resulting permission state and endpoint reachability.
 
 ## CI
 

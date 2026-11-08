@@ -21,6 +21,9 @@ concurrency:
 jobs:
   e2e:
     name: Playwright real-browser integration
+    # The browser/model-download lane is for review-ready PRs only; draft
+    # updates emit opened/synchronize too, and must not spend these minutes.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
