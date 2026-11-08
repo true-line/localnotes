@@ -139,7 +139,7 @@
 
 .note-list__footer {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1.4fr);
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid var(--color-border);
@@ -149,7 +149,7 @@
 .note-list__data-btn {
   min-width: 0;
   height: 28px;
-  padding: 0 4px;
+  padding: 0 8px;
   display: flex;
   align-items: center;
   justify-content: center;
