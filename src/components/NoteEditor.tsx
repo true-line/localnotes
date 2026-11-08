@@ -5,6 +5,8 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { NoteConnections } from './NoteConnections';
 import '../styles/NoteEditor.css';
 
+type EditorMode = 'raw' | 'split' | 'reading';
+
 interface Props {
   note: Note;
   allNotes?: Note[];
@@ -35,8 +37,8 @@ export function NoteEditor({
 }: Props) {
   const titleRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
-  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
-  const prevModeRef = useRef<'edit' | 'preview' | null>(null);
+  const [mode, setMode] = useState<EditorMode>('raw');
+  const prevModeRef = useRef<EditorMode | null>(null);
   const selectionTimerRef = useRef<number | null>(null);
 
   const reportSelection = useCallback(() => {
@@ -53,22 +55,25 @@ export function NoteEditor({
     }, 300);
   }, [onSelectionChange]);
 
-  // Leaving edit mode unmounts the textarea without any select event: the
-  // reported selection is gone, so the Selection chip must reset.
+  // Reading unmounts the textarea without any select event: the reported
+  // selection is gone, so the Selection chip must reset.
   useEffect(() => {
-    if (mode === 'preview') onSelectionChange?.('');
+    if (mode === 'reading') onSelectionChange?.('');
   }, [mode, onSelectionChange]);
 
   useEffect(() => {
-    if (titleRef.current && note.title === '') {
-      titleRef.current.focus();
-    }
-    setMode('edit');
+    setMode('raw');
     prevModeRef.current = null;
-  }, [note.id, note.title]);
+  }, [note.id]);
 
   useEffect(() => {
-    if (prevModeRef.current === 'preview' && mode === 'edit') {
+    if (note.title === '' && mode !== 'reading') {
+      titleRef.current?.focus();
+    }
+  }, [note.id, note.title, mode]);
+
+  useEffect(() => {
+    if (prevModeRef.current === 'reading' && mode !== 'reading') {
       contentRef.current?.focus();
     }
     prevModeRef.current = mode;
@@ -80,10 +85,10 @@ export function NoteEditor({
       if (!mod) return;
       if (e.key === 'p') {
         e.preventDefault();
-        setMode('preview');
+        setMode('reading');
       } else if (e.key === 'e') {
         e.preventDefault();
-        setMode('edit');
+        setMode('raw');
       }
     }
     window.addEventListener('keydown', handleKeyDown);
@@ -110,26 +115,59 @@ export function NoteEditor({
     [onOpenGraphNode]
   );
 
+  const contentEditor = (
+    <textarea
+      ref={contentRef}
+      className="note-editor__content"
+      placeholder="Start writing… (use [[Note or Concept]] and #tags to connect ideas)"
+      aria-label="Note content"
+      value={note.content}
+      onChange={(e) => onUpdate(note.id, { content: e.target.value })}
+      onSelect={reportSelection}
+      onKeyUp={reportSelection}
+    />
+  );
+  const renderedNote = (
+    <div className="note-editor__preview" role="region" aria-label="Note preview">
+      <MarkdownRenderer
+        content={note.content}
+        onWikiLinkClick={handleWikiLinkClick}
+        onTagClick={handleTagClick}
+      />
+    </div>
+  );
+
   return (
     <main className="note-editor">
       <div className="note-editor__toolbar">
-        <div className="note-editor__mode-toggle">
+        <div className="note-editor__mode-toggle" role="group" aria-label="Editor mode">
           <button
-            className={`note-editor__mode-btn${mode === 'edit' ? ' note-editor__mode-btn--active' : ''}`}
-            aria-pressed={mode === 'edit'}
-            onClick={() => setMode('edit')}
+            type="button"
+            className={`note-editor__mode-btn${mode === 'raw' ? ' note-editor__mode-btn--active' : ''}`}
+            aria-pressed={mode === 'raw'}
+            onClick={() => setMode('raw')}
           >
-            Edit
+            Raw
           </button>
           <button
-            className={`note-editor__mode-btn${mode === 'preview' ? ' note-editor__mode-btn--active' : ''}`}
-            aria-pressed={mode === 'preview'}
-            onClick={() => setMode('preview')}
+            type="button"
+            className={`note-editor__mode-btn${mode === 'split' ? ' note-editor__mode-btn--active' : ''}`}
+            aria-pressed={mode === 'split'}
+            onClick={() => setMode('split')}
           >
-            Preview
+            Edit + Preview
+          </button>
+          <button
+            type="button"
+            className={`note-editor__mode-btn${mode === 'reading' ? ' note-editor__mode-btn--active' : ''}`}
+            aria-pressed={mode === 'reading'}
+            onClick={() => setMode('reading')}
+          >
+            Reading
           </button>
         </div>
         <button
+          type="button"
           className="note-editor__delete-btn"
           aria-label="Delete note"
           onClick={() => onDelete(note.id)}
@@ -137,41 +175,35 @@ export function NoteEditor({
           Delete note
         </button>
       </div>
-      <input
-        ref={titleRef}
-        className="note-editor__title"
-        type="text"
-        placeholder="Note title"
-        aria-label="Note title"
-        value={note.title}
-        onChange={(e) => onUpdate(note.id, { title: e.target.value })}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            contentRef.current?.focus();
-          }
-        }}
-      />
-      {mode === 'edit' ? (
-        <textarea
-          ref={contentRef}
-          className="note-editor__content"
-          placeholder="Start writing… (use [[Note or Concept]] and #tags to connect ideas)"
-          aria-label="Note content"
-          value={note.content}
-          onChange={(e) => onUpdate(note.id, { content: e.target.value })}
-          onSelect={reportSelection}
-          onKeyUp={reportSelection}
+      {mode !== 'reading' ? (
+        <input
+          ref={titleRef}
+          className="note-editor__title"
+          type="text"
+          placeholder="Note title"
+          aria-label="Note title"
+          value={note.title}
+          onChange={(e) => onUpdate(note.id, { title: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              contentRef.current?.focus();
+            }
+          }}
         />
       ) : (
-        <div className="note-editor__preview">
-          <MarkdownRenderer
-            content={note.content}
-            onWikiLinkClick={handleWikiLinkClick}
-            onTagClick={handleTagClick}
-          />
+        <h1 className="note-editor__title note-editor__title--reading">
+          {note.title.trim() || 'Untitled'}
+        </h1>
+      )}
+      {mode === 'raw' && contentEditor}
+      {mode === 'split' && (
+        <div className="note-editor__split">
+          {contentEditor}
+          {renderedNote}
         </div>
       )}
+      {mode === 'reading' && renderedNote}
       <NoteConnections
         note={note}
         allNotes={allNotes}

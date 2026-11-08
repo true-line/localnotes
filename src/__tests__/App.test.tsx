@@ -116,6 +116,40 @@ describe('App integration', () => {
     expect(screen.queryByText('Saving…')).not.toBeInTheDocument();
   });
 
+  it('switches among Raw, Edit + Preview, and Reading without losing content', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Mode test');
+    await user.type(
+      screen.getByLabelText(/note content/i),
+      'Some **formatted** text'
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit + Preview' }));
+    expect(screen.getByLabelText(/note content/i)).toHaveValue(
+      'Some **formatted** text'
+    );
+    const preview = screen.getByRole('region', { name: 'Note preview' });
+    expect(within(preview).getByText('formatted')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Reading' }));
+    expect(screen.queryByLabelText(/note content/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/note title/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Mode test' })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: 'Note preview' })).getByText(
+        'formatted'
+      )
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
+    expect(screen.getByLabelText(/note title/i)).toHaveValue('Mode test');
+    expect(screen.getByLabelText(/note content/i)).toHaveValue(
+      'Some **formatted** text'
+    );
+  });
+
   it('shows delete confirmation dialog when delete is triggered', async () => {
     const user = userEvent.setup();
     render(<App />);
