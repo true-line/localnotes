@@ -1,0 +1,47 @@
+# Real-browser integration lane (Playwright), separate from the fast Vitest
+# unit lane in ci.yml: the packed MV3 extension in headful Chromium, a live
+# OpenAI-compatible contract server, and real MiniLM download/fallback/cache
+# behavior. See docs/e2e-testing.md for local usage.
+name: E2E
+run-name: E2E
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright real-browser integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Web integration tests
+        run: npx playwright test --project=web
+      - name: Extension integration tests (headful Chromium under Xvfb)
+        run: xvfb-run -a npx playwright test --project=extension
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
