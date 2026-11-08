@@ -654,6 +654,16 @@ function parseArchive(text: string): ParsedArchive {
 
   const candidates = archive.notes as unknown[];
   const valid = candidates.filter(isNote);
+  // Duplicate ids inside one archive would be misclassified as independent
+  // additions (last write wins) or as indistinguishable conflicts, so the
+  // archive is rejected before anything is previewed or committed.
+  const seenIds = new Set<string>();
+  for (const note of valid) {
+    if (seenIds.has(note.id)) {
+      throw new Error(`archive contains duplicate note id: ${note.id}`);
+    }
+    seenIds.add(note.id);
+  }
   const revisions: Record<string, NoteRevision[]> = {};
   const rawRevisions = archive.revisions;
   if (

@@ -404,6 +404,22 @@ describe('export/import', () => {
     expect(await repo.getAllNotes()).toEqual([]);
   });
 
+  it('rejects archives containing duplicate note ids without writing anything', async () => {
+    const repo = await getRepository();
+    const archive = JSON.stringify({
+      app: 'localnotes',
+      version: 1,
+      exportedAt: 1,
+      notes: [
+        makeNote('a', { title: 'first copy' }),
+        makeNote('a', { title: 'second copy' }),
+      ],
+    });
+    await expect(importVault(archive)).rejects.toThrow(/duplicate note id: a/);
+    await expect(previewImport(archive)).rejects.toThrow(/duplicate note id: a/);
+    expect(await repo.getAllNotes()).toEqual([]);
+  });
+
   it('throws on malformed archives', async () => {
     await expect(importVault('{nope')).rejects.toThrow(/not valid JSON/);
     await expect(importVault('[]')).rejects.toThrow(/not a LocalNotes archive/);
