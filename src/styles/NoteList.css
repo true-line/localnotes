@@ -149,12 +149,42 @@
   flex-shrink: 0;
 }
 
-.note-list__save-status {
-  padding: 4px 12px 10px;
-  font-size: 12px;
+.note-list__persistence-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
   color: var(--color-muted);
-  text-align: center;
+  font-size: 11px;
   flex-shrink: 0;
+}
+
+.note-list__save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.note-list__save-state--error {
+  color: var(--color-danger);
+}
+
+.note-list__save-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: note-list-save-spin 0.8s linear infinite;
+}
+
+@keyframes note-list-save-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* NoteListItem */

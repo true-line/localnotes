@@ -163,6 +163,7 @@ describe('useNotes', () => {
       'Newer seeded note',
       'Seeded note',
     ]);
+    expect(result.current.savedNoteCount).toBe(2);
   });
 
   it('persists updates and deletes to IndexedDB', async () => {
@@ -236,10 +237,12 @@ describe('useNotes write failure recovery', () => {
       result.current.createNote();
     });
     await waitFor(() => expect(result.current.pendingWrites).toBe(1));
+    expect(result.current.savedNoteCount).toBe(0);
     await act(async () => {
       resolveWrite();
     });
     await waitFor(() => expect(result.current.pendingWrites).toBe(0));
+    expect(result.current.savedNoteCount).toBe(1);
     expect(result.current.failedWrites).toHaveLength(0);
   });
 
@@ -260,8 +263,9 @@ describe('useNotes write failure recovery', () => {
       noteTitle: 'Draft',
     });
     expect(result.current.pendingWrites).toBe(0);
-    // Optimistic state shows the note; durable storage does not.
+    // Optimistic state shows the note; durable storage and its count do not.
     expect(result.current.notes).toHaveLength(1);
+    expect(result.current.savedNoteCount).toBe(0);
     expect(await repo.getAllNotes()).toHaveLength(0);
     spy.mockRestore();
   });
@@ -398,8 +402,9 @@ describe('useNotes write failure recovery', () => {
       kind: 'delete',
       noteTitle: 'Doomed',
     });
-    // Optimistically gone from the UI, but still durable.
+    // Optimistically gone from the UI, but still durable and counted.
     expect(result.current.notes).toHaveLength(0);
+    expect(result.current.savedNoteCount).toBe(1);
     expect(await repo.getAllNotes()).toHaveLength(1);
 
     spy.mockRestore();
@@ -408,6 +413,7 @@ describe('useNotes write failure recovery', () => {
     });
     await waitFor(() => expect(result.current.failedWrites).toHaveLength(0));
     await repo.flushWrites();
+    await waitFor(() => expect(result.current.savedNoteCount).toBe(0));
     expect(await repo.getAllNotes()).toHaveLength(0);
   });
 

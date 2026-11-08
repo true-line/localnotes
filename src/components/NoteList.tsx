@@ -8,6 +8,7 @@ interface Props {
   selectedId: string | null;
   isGraphOpen?: boolean;
   dataStatus?: string | null;
+  savedNoteCount: number;
   isSaving?: boolean;
   /** Notes whose latest write failed to persist. */
   failedNoteIds?: ReadonlySet<string>;
@@ -25,6 +26,7 @@ export function NoteList({
   selectedId,
   isGraphOpen = false,
   dataStatus,
+  savedNoteCount,
   isSaving = false,
   failedNoteIds,
   onSelect,
@@ -93,6 +95,19 @@ export function NoteList({
           ))}
         </ul>
       )}
+      <div className="note-list__persistence-status" role="status">
+        <span>
+          {savedNoteCount} saved {savedNoteCount === 1 ? 'note' : 'notes'}
+        </span>
+        <span
+          className={`note-list__save-state${
+            failedNoteIds?.size ? ' note-list__save-state--error' : ''
+          }`}
+        >
+          {isSaving && <span className="note-list__save-spinner" aria-hidden="true" />}
+          {isSaving ? 'Saving…' : failedNoteIds?.size ? 'Save failed' : 'Saved'}
+        </span>
+      </div>
       {(onExport || onImportFiles) && (
         <div className="note-list__footer">
           {onExport && (
@@ -167,11 +182,6 @@ export function NoteList({
       {dataStatus && (
         <p className="note-list__data-status" role="status">
           {dataStatus}
-        </p>
-      )}
-      {isSaving && (
-        <p className="note-list__save-status" role="status">
-          Saving…
         </p>
       )}
     </aside>

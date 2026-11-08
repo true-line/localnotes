@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../App';
 import { getRepository, resetRepositoryForTests } from '../storage';
@@ -53,6 +53,33 @@ describe('App integration', () => {
     const contentArea = screen.getByLabelText(/note content/i);
     await user.type(contentArea, 'Hello world');
     expect(contentArea).toHaveValue('Hello world');
+  });
+
+  it('shows durable count and save progress without blocking editing', async () => {
+    const repo = await getRepository();
+    let resolveWrite!: () => void;
+    vi.spyOn(repo, 'putNote').mockImplementation(
+      () => new Promise<void>((resolve) => (resolveWrite = resolve))
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+    expect(screen.getByText('0 saved notes')).toBeInTheDocument();
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(screen.getByText('0 saved notes')).toBeInTheDocument();
+    expect(document.querySelector('.note-list__save-spinner')).toBeInTheDocument();
+
+    const titleInput = screen.getByLabelText(/note title/i);
+    await user.type(titleInput, 'Still editable');
+    expect(titleInput).toHaveValue('Still editable');
+
+    await act(async () => resolveWrite());
+    expect(await screen.findByText('1 saved note')).toBeInTheDocument();
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(screen.queryByText('Saving…')).not.toBeInTheDocument();
   });
 
   it('shows delete confirmation dialog when delete is triggered', async () => {
@@ -416,6 +443,8 @@ describe('App integration', () => {
     expect(
       screen.getByRole('img', { name: /changes not saved/i })
     ).toBeInTheDocument();
+    expect(screen.getByText('0 saved notes')).toBeInTheDocument();
+    expect(screen.getByText('Save failed')).toBeInTheDocument();
     expect(await repo.getAllNotes()).toHaveLength(0);
 
     spy.mockRestore();
