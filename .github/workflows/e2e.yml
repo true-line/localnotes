@@ -34,9 +34,25 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - name: Install locked dependencies
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@85ce985f27900fa3c7456d95575fd66b4d4966b7
+        with:
+          task: Install locked dependencies
+          executable: npm
+          arguments-json: '["ci"]'
+          timeout-seconds: '600'
+          attempts: '2'
+          retry-delay-seconds: '5'
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      - name: Install Chromium and its system dependencies
+        uses: true-line/trueline-agent-ci/.github/actions/bounded-command@85ce985f27900fa3c7456d95575fd66b4d4966b7
+        with:
+          task: Install Chromium and its system dependencies
+          executable: npx
+          arguments-json: '["playwright", "install", "--with-deps", "chromium"]'
+          timeout-seconds: '600'
+          attempts: '2'
+          retry-delay-seconds: '5'
       - name: Web integration tests
         run: npx playwright test --project=web
       - name: Extension integration tests (headful Chromium under Xvfb)
