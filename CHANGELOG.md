@@ -1,5 +1,13 @@
 # localnotes
 
+## 0.7.1
+
+### Patch Changes
+
+- 34b3eee: Improve import/export spacing and add collapsible sidebar and Knowledge Connections panels.
+- 08ae81a: Add Raw, Edit + Preview, and Reading editor modes using the existing Markdown renderer.
+- eb230c8: Add a durable saved-note count and animated, non-blocking save status.
+
 ## 0.7.0
 
 ### Minor Changes
