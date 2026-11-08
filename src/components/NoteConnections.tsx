@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Note, EmbeddingMap, EmbeddingStatus } from '../types';
 import { getNoteConnections, normalizeKey } from '../knowledgeGraph';
 import '../styles/NoteConnections.css';
@@ -32,6 +32,7 @@ export function NoteConnections({
   onOpenGraphNode,
   onReindexEmbeddings,
 }: Props) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const connections = useMemo(
     () => getNoteConnections(note.id, allNotes, embeddings),
     [note, allNotes, embeddings]
@@ -56,7 +57,7 @@ export function NoteConnections({
 
   return (
     <section
-      className="note-connections"
+      className={`note-connections${isCollapsed ? ' note-connections--collapsed' : ''}`}
       aria-label="Knowledge graph connections"
     >
       <div className="note-connections__header">
@@ -68,7 +69,7 @@ export function NoteConnections({
           >
             {STATUS_LABELS[embeddingStatus]}
           </span>
-          {onReindexEmbeddings && (
+          {!isCollapsed && onReindexEmbeddings && (
             <button
               type="button"
               className="note-connections__graph-link"
@@ -79,25 +80,45 @@ export function NoteConnections({
             </button>
           )}
         </div>
-        {onOpenGraphNode && (
+        <div className="note-connections__actions">
+          {!isCollapsed && onOpenGraphNode && (
+            <button
+              type="button"
+              className="note-connections__graph-link"
+              onClick={() => onOpenGraphNode(`note:${note.id}`)}
+            >
+              Explore in Graph
+            </button>
+          )}
           <button
             type="button"
             className="note-connections__graph-link"
-            onClick={() => onOpenGraphNode(`note:${note.id}`)}
+            onClick={() => setIsCollapsed((collapsed) => !collapsed)}
+            aria-label={isCollapsed ? 'Expand knowledge connections' : 'Collapse knowledge connections'}
+            aria-expanded={!isCollapsed}
+            aria-controls="note-connections-content"
           >
-            Explore in Graph
+            {isCollapsed ? 'Show' : 'Hide'}
           </button>
-        )}
+        </div>
       </div>
 
       {!hasAny ? (
-        <p className="note-connections__hint">
+        <p
+          id="note-connections-content"
+          className="note-connections__hint"
+          hidden={isCollapsed}
+        >
           Link notes and concepts with <code>[[Wiki Links]]</code> or categorize
           with <code>#tags</code> to build your knowledge graph. Neural
           embeddings also automatically link semantically related notes.
         </p>
       ) : (
-        <div className="note-connections__grid">
+        <div
+          id="note-connections-content"
+          className="note-connections__grid"
+          hidden={isCollapsed}
+        >
           {hasOutgoing && (
             <div className="note-connections__group">
               <h3 className="note-connections__group-title">

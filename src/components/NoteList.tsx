@@ -7,6 +7,7 @@ interface Props {
   notes: Note[];
   selectedId: string | null;
   isGraphOpen?: boolean;
+  isCollapsed?: boolean;
   dataStatus?: string | null;
   isSaving?: boolean;
   /** Notes whose latest write failed to persist. */
@@ -15,6 +16,7 @@ interface Props {
   onDelete: (id: string) => void;
   onNewNote: () => void;
   onToggleGraph?: () => void;
+  onToggleCollapse?: () => void;
   onOpenPalette?: () => void;
   onExport?: () => void;
   onImportFiles?: (files: File[]) => void;
@@ -24,6 +26,7 @@ export function NoteList({
   notes,
   selectedId,
   isGraphOpen = false,
+  isCollapsed = false,
   dataStatus,
   isSaving = false,
   failedNoteIds,
@@ -31,17 +34,62 @@ export function NoteList({
   onDelete,
   onNewNote,
   onToggleGraph,
+  onToggleCollapse,
   onOpenPalette,
   onExport,
   onImportFiles,
 }: Props) {
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
+
+  if (isCollapsed) {
+    return (
+      <aside className="note-list note-list--collapsed" aria-label="Notes sidebar">
+        {onToggleCollapse && (
+          <button
+            type="button"
+            className="note-list__collapse-btn"
+            onClick={onToggleCollapse}
+            aria-label="Expand sidebar"
+            aria-expanded={false}
+            title="Expand sidebar"
+          >
+            »
+          </button>
+        )}
+        <div className="note-list__compact-statuses">
+          {isSaving && (
+            <span role="status" aria-label="Saving notes" title="Saving notes">
+              …
+            </span>
+          )}
+          {dataStatus && (
+            <span role="status" aria-label={dataStatus} title={dataStatus}>
+              i
+            </span>
+          )}
+        </div>
+      </aside>
+    );
+  }
+
   return (
-    <aside className="note-list">
+    <aside className="note-list" aria-label="Notes sidebar">
       <div className="note-list__header">
         <h1 className="note-list__app-name">localnotes</h1>
         <div className="note-list__actions">
+          {onToggleCollapse && (
+            <button
+              type="button"
+              className="note-list__collapse-btn"
+              onClick={onToggleCollapse}
+              aria-label="Collapse sidebar"
+              aria-expanded={true}
+              title="Collapse sidebar"
+            >
+              «
+            </button>
+          )}
           {onOpenPalette && (
             <button
               type="button"

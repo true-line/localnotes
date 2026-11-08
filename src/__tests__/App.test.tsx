@@ -35,6 +35,40 @@ describe('App integration', () => {
     expect(screen.getByLabelText(/note title/i)).toBeInTheDocument();
   });
 
+  it('collapses and restores the notes sidebar without unmounting the editor', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Visible while collapsed');
+
+    await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+
+    expect(screen.queryByRole('listbox', { name: 'Notes' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/note title/i)).toHaveValue('Visible while collapsed');
+
+    await user.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+    expect(screen.getByRole('listbox', { name: 'Notes' })).toBeInTheDocument();
+  });
+
+  it('collapses and restores the Knowledge Connections bar', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    const hint = screen.getByText(/link notes and concepts/i);
+    expect(hint).toBeVisible();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Collapse knowledge connections' })
+    );
+    expect(hint).not.toBeVisible();
+    expect(screen.getByText('Embeddings: Idle')).toBeVisible();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Expand knowledge connections' })
+    );
+    expect(hint).toBeVisible();
+  });
+
   it('auto-saves title as user types', async () => {
     const user = userEvent.setup();
     render(<App />);
