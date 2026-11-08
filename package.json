@@ -16,6 +16,7 @@
     "test:file:inner": "vitest run",
     "test:inner": "npm run check:agent-context && vitest run src",
     "test:e2e": "playwright test",
+    "bench:kg": "vitest bench src/__benchmarks__",
     "icons": "node scripts/generate-icons.js",
     "changeset": "changeset",
     "changeset:version": "changeset version && npm run version:sync",

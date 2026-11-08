@@ -188,50 +188,74 @@ export function computeLocalSemanticEmbedding(
 }
 
 /**
- * Computes clause/facet-level semantic similarity (MaxSim across clauses +
- * shared concept overlap) so notes that share a specific entity, location,
- * or instrument facet connect even when their overall paragraphs cover different topics.
+ * Precomputed per-note facet data (canonical stem set + clause embeddings)
+ * so all-pairs facet similarity does not re-tokenize and re-embed each note
+ * for every pair. Profiles are deterministic functions of the note text.
  */
-export function computeFacetSimilarity(
-  noteA: Pick<Note, 'title' | 'content'>,
-  noteB: Pick<Note, 'title' | 'content'>
+export interface NoteFacetProfile {
+  stems: Set<string>;
+  clauseVectors: number[][];
+  clauseNorms: number[];
+}
+
+/**
+ * Builds the facet profile for a note, or returns null when the note has no
+ * embeddable text or no meaningful stems (in which case facet similarity is 0).
+ */
+export function computeNoteFacetProfile(
+  note: Pick<Note, 'title' | 'content'>
+): NoteFacetProfile | null {
+  const text = getNoteEmbedText(note);
+  if (!text) return null;
+
+  const stems = new Set(tokenizeMeaningfulWords(text).map(stemWord));
+  if (stems.size === 0) return null;
+
+  const clauseVectors: number[][] = [];
+  const clauseNorms: number[] = [];
+  for (const rawClause of text.split(/[.;!?\n]+/)) {
+    const clause = rawClause.trim();
+    if (clause.length < 12) continue;
+    const vec = computeLocalSemanticEmbedding(clause, 128);
+    if (vec.length > 0) {
+      clauseVectors.push(vec);
+      clauseNorms.push(vectorNorm(vec));
+    }
+  }
+
+  return { stems, clauseVectors, clauseNorms };
+}
+
+/**
+ * Computes facet similarity between two precomputed profiles; numerically
+ * identical to `computeFacetSimilarity` on the underlying notes.
+ */
+export function facetSimilarityFromProfiles(
+  profileA: NoteFacetProfile,
+  profileB: NoteFacetProfile
 ): number {
-  const textA = getNoteEmbedText(noteA);
-  const textB = getNoteEmbedText(noteB);
-  if (!textA || !textB) return 0;
-
-  const stemsA = new Set(tokenizeMeaningfulWords(textA).map(stemWord));
-  const stemsB = new Set(tokenizeMeaningfulWords(textB).map(stemWord));
-  if (stemsA.size === 0 || stemsB.size === 0) return 0;
-
   let sharedCount = 0;
-  for (const s of stemsA) {
-    if (stemsB.has(s)) sharedCount++;
+  for (const s of profileA.stems) {
+    if (profileB.stems.has(s)) sharedCount++;
   }
   if (sharedCount === 0) return 0;
 
   // Overlap coefficient (Szymkiewicz–Simpson) weighted toward meaningful concept matches
-  const minSize = Math.min(stemsA.size, stemsB.size);
+  const minSize = Math.min(profileA.stems.size, profileB.stems.size);
   const overlapCoeff = sharedCount / Math.max(minSize, 4);
 
   // Also check max clause-to-clause cosine similarity
-  const clausesA = textA
-    .split(/[.;!?\n]+/)
-    .map((c) => c.trim())
-    .filter((c) => c.length >= 12);
-  const clausesB = textB
-    .split(/[.;!?\n]+/)
-    .map((c) => c.trim())
-    .filter((c) => c.length >= 12);
-
   let maxClauseSim = 0;
-  for (const ca of clausesA) {
-    const va = computeLocalSemanticEmbedding(ca, 128);
-    if (va.length === 0) continue;
-    for (const cb of clausesB) {
-      const vb = computeLocalSemanticEmbedding(cb, 128);
-      if (vb.length === 0) continue;
-      const sim = cosineSimilarity(va, vb);
+  for (let i = 0; i < profileA.clauseVectors.length; i++) {
+    const va = profileA.clauseVectors[i];
+    const normA = profileA.clauseNorms[i];
+    for (let j = 0; j < profileB.clauseVectors.length; j++) {
+      const sim = cosineSimilarityWithNorms(
+        va,
+        profileB.clauseVectors[j],
+        normA,
+        profileB.clauseNorms[j]
+      );
       if (sim > maxClauseSim) maxClauseSim = sim;
     }
   }
@@ -242,6 +266,21 @@ export function computeFacetSimilarity(
     sharedCount >= 2 ? Math.min(0.85, 0.32 + sharedCount * 0.08) : 0;
 
   return Math.max(overlapCoeff, maxClauseSim, conceptBoost);
+}
+
+/**
+ * Computes clause/facet-level semantic similarity (MaxSim across clauses +
+ * shared concept overlap) so notes that share a specific entity, location,
+ * or instrument facet connect even when their overall paragraphs cover different topics.
+ */
+export function computeFacetSimilarity(
+  noteA: Pick<Note, 'title' | 'content'>,
+  noteB: Pick<Note, 'title' | 'content'>
+): number {
+  const profileA = computeNoteFacetProfile(noteA);
+  const profileB = computeNoteFacetProfile(noteB);
+  if (!profileA || !profileB) return 0;
+  return facetSimilarityFromProfiles(profileA, profileB);
 }
 
 /**
@@ -259,6 +298,37 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   }
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
   if (denom === 0) return 0;
+  return dot / denom;
+}
+
+/**
+ * L2 norm of a vector, accumulated in the same order as `cosineSimilarity`
+ * so norm-cached similarities are numerically identical to recomputed ones.
+ */
+export function vectorNorm(a: number[]): number {
+  let normSq = 0;
+  for (let i = 0; i < a.length; i++) {
+    normSq += a[i] * a[i];
+  }
+  return Math.sqrt(normSq);
+}
+
+/**
+ * Cosine similarity with both norms precomputed; identical result to
+ * `cosineSimilarity(a, b)` but skips the per-pair norm accumulation.
+ */
+export function cosineSimilarityWithNorms(
+  a: number[],
+  b: number[],
+  normA: number,
+  normB: number
+): number {
+  const denom = normA * normB;
+  if (denom === 0) return 0;
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+  }
   return dot / denom;
 }
 
