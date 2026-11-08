@@ -155,7 +155,7 @@ export function App() {
           .join('\n'),
       });
     }
-    if (selectedNote) {
+    if (isChatOpen && selectedNote) {
       const conn = getNoteConnections(selectedNote.id, notes, embeddings);
       const bits = [
         conn.backlinks.length &&
@@ -173,7 +173,7 @@ export function App() {
       }
     }
     return options;
-  }, [selectedNote, selectionText, notes, embeddings]);
+  }, [isChatOpen, selectedNote, selectionText, notes, embeddings]);
 
   useEffect(() => {
     if (!dataStatus) return;
@@ -490,6 +490,7 @@ export function App() {
           />
         ) : selectedNote ? (
           <NoteEditor
+            key={selectedNote.id}
             note={selectedNote}
             allNotes={notes}
             embeddings={embeddings}

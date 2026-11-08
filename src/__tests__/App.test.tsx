@@ -116,6 +116,56 @@ describe('App integration', () => {
     expect(screen.queryByText('Saving…')).not.toBeInTheDocument();
   });
 
+  it('switches among Raw, Edit + Preview, and Reading without losing content', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note title/i), 'Mode test');
+    await user.type(
+      screen.getByLabelText(/note content/i),
+      'Some **formatted** text'
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit + Preview' }));
+    expect(screen.getByLabelText(/note content/i)).toHaveValue(
+      'Some **formatted** text'
+    );
+    const preview = screen.getByRole('region', { name: 'Note preview' });
+    expect(await within(preview).findByText('formatted')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Reading' }));
+    expect(screen.queryByLabelText(/note content/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/note title/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Mode test' })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: 'Note preview' })).getByText(
+        'formatted'
+      )
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
+    expect(screen.getByLabelText(/note title/i)).toHaveValue('Mode test');
+    expect(screen.getByLabelText(/note content/i)).toHaveValue(
+      'Some **formatted** text'
+    );
+  });
+
+  it('keeps source input immediate while the split preview waits for a pause', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('button', { name: 'Edit + Preview' }));
+    const content = screen.getByLabelText(/note content/i);
+
+    fireEvent.change(content, { target: { value: 'A' } });
+    fireEvent.change(content, { target: { value: 'AB' } });
+
+    expect(content).toHaveValue('AB');
+    const preview = screen.getByRole('region', { name: 'Note preview' });
+    expect(within(preview).queryByText('AB')).not.toBeInTheDocument();
+    expect(await within(preview).findByText('AB')).toBeInTheDocument();
+  });
+
   it('shows delete confirmation dialog when delete is triggered', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -687,6 +737,36 @@ describe('App integration', () => {
     expect(currentChip).toHaveAttribute('title', expect.stringContaining('Second Note'));
   }, 15_000);
 
+  it('clears stale agent selection when switching between Raw and split modes', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New note' }));
+    await user.type(screen.getByLabelText(/note content/i), 'selectable words here');
+    fireEvent.select(screen.getByLabelText(/note content/i), {
+      target: { selectionStart: 0, selectionEnd: 9 },
+    });
+    await user.keyboard('{Meta>}j{/Meta}');
+    expect(
+      await screen.findByRole('button', { name: 'Selection' })
+    ).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'Edit + Preview' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Selection' })).toBeNull()
+    );
+
+    fireEvent.select(screen.getByLabelText(/note content/i), {
+      target: { selectionStart: 0, selectionEnd: 9 },
+    });
+    expect(
+      await screen.findByRole('button', { name: 'Selection' })
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Selection' })).toBeNull()
+    );
+  }, 15_000);
+
   it('shows backlinks, related notes, and concept creation in Knowledge Connections panel', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -709,7 +789,9 @@ describe('App integration', () => {
     );
 
     // Click outgoing [[Relativity]] pill in Knowledge Connections to navigate back to Relativity
-    await user.click(screen.getByRole('button', { name: '[[Relativity]]' }));
+    await user.click(
+      await screen.findByRole('button', { name: '[[Relativity]]' })
+    );
     expect(screen.getByLabelText(/note title/i)).toHaveValue('Relativity');
 
     // Verify "Gravity" appears under Backlinks and Related by Topic

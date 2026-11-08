@@ -15,6 +15,7 @@ export function useNoteEmbeddings(notes: Note[], debounceMs = 60) {
   const [status, setStatus] = useState<EmbeddingStatus>('idle');
   const [reindexTrigger, setReindexTrigger] = useState(0);
   const modelLoadedRef = useRef(false);
+  const localCacheRef = useRef<EmbeddingCacheStore>({});
 
   // Hydrate the embedding cache from IndexedDB before any indexing runs,
   // so already-computed vectors are never recomputed or overwritten.
@@ -43,6 +44,7 @@ export function useNoteEmbeddings(notes: Note[], debounceMs = 60) {
     getRepository()
       .then((repo) => repo.clearEmbeddings())
       .catch((err) => console.error('localnotes: failed to clear embeddings', err));
+    localCacheRef.current = {};
     setCache({});
     setReindexTrigger((t) => t + 1);
   }, []);
@@ -58,7 +60,14 @@ export function useNoteEmbeddings(notes: Note[], debounceMs = 60) {
       if (entry && entry.hash === hash && entry.vector.length > 0) {
         map[note.id] = entry.vector;
       } else {
-        map[note.id] = computeLocalSemanticEmbedding(text);
+        const local = localCacheRef.current[note.id];
+        if (local?.hash === hash) {
+          map[note.id] = local.vector;
+        } else {
+          const vector = computeLocalSemanticEmbedding(text);
+          localCacheRef.current[note.id] = { hash, vector };
+          map[note.id] = vector;
+        }
       }
     }
     return map;
