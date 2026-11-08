@@ -6,14 +6,41 @@ function sortByUpdated(notes: Note[]): Note[] {
   return [...notes].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+export type FailedWriteKind = 'create' | 'update' | 'delete';
+
+export interface FailedWrite {
+  noteId: string;
+  kind: FailedWriteKind;
+  /** Title at the time of the failure, so the UI can name the note even after
+      a failed delete removed it from the list. */
+  noteTitle: string;
+}
+
+interface FailedWriteOp {
+  kind: FailedWriteKind;
+  noteTitle: string;
+  /** Durable-base snapshot for update retries, or the deleted note for delete
+      retries. Absent for creates (nothing durable to base on). */
+  previous?: Note;
+}
+
 export function useNotes() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
+  const [pendingWrites, setPendingWrites] = useState(0);
+  const [failedWrites, setFailedWrites] = useState<FailedWrite[]>([]);
   // Bumped on every local mutation; async refreshes compare against it so a
   // read that raced with an edit never overwrites newer optimistic state.
   const mutationCountRef = useRef(0);
+  // What to re-run for each failed write, keyed by note id.
+  const failedOpsRef = useRef(new Map<string, FailedWriteOp>());
+  // Latest notes for retry/discard callbacks, which run outside render.
+  const notesRef = useRef<Note[]>([]);
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,11 +68,51 @@ export function useNotes() {
     };
   }, []);
 
-  const persist = useCallback(
-    (op: (repo: NotesRepository) => Promise<unknown>) => {
+  /**
+   * Runs one durable write for an optimistic mutation. Failures are recorded
+   * per note (not just logged) so the UI can surface them and offer recovery;
+   * a later successful write for the same note heals the record, because the
+   * note is then durable in a newer form.
+   */
+  const runWrite = useCallback(
+    (
+      noteId: string,
+      kind: FailedWriteKind,
+      op: (repo: NotesRepository) => Promise<unknown>,
+      context: { noteTitle: string; previous?: Note }
+    ) => {
+      setPendingWrites((count) => count + 1);
       getRepository()
         .then(op)
-        .catch((err) => console.error('localnotes: write failed', err));
+        .then(() => {
+          if (failedOpsRef.current.delete(noteId)) {
+            setFailedWrites((prev) =>
+              prev.filter((f) => f.noteId !== noteId)
+            );
+          }
+        })
+        .catch((err) => {
+          console.error('localnotes: write failed', err);
+          const existing = failedOpsRef.current.get(noteId);
+          // Keep the earliest durable base for a note: later optimistic edits
+          // are recovered from live state, not from this entry. A failed
+          // delete always replaces the entry — the note must end up deleted.
+          if (!existing || kind === 'delete') {
+            failedOpsRef.current.set(noteId, {
+              kind,
+              noteTitle: context.noteTitle,
+              previous: context.previous,
+            });
+          }
+          const recorded = failedOpsRef.current.get(noteId)!;
+          setFailedWrites((prev) => [
+            ...prev.filter((f) => f.noteId !== noteId),
+            { noteId, kind: recorded.kind, noteTitle: recorded.noteTitle },
+          ]);
+        })
+        .finally(() => {
+          setPendingWrites((count) => Math.max(0, count - 1));
+        });
     },
     []
   );
@@ -61,22 +128,101 @@ export function useNotes() {
     setNotes(sortByUpdated(all));
   }, []);
 
-  const createNote = useCallback((initialTitle?: string | unknown) => {
-    const now = Date.now();
-    const title = typeof initialTitle === 'string' ? initialTitle : '';
-    const note: Note = {
-      id: crypto.randomUUID(),
-      title,
-      content: '',
-      createdAt: now,
-      updatedAt: now,
-    };
-    mutationCountRef.current += 1;
-    setNotes((prev) => sortByUpdated([note, ...prev]));
-    setSelectedId(note.id);
-    persist((repo) => repo.putNote(note));
-    return note;
-  }, [persist]);
+  /**
+   * Re-runs a failed write. Creates and updates persist the note's LATEST
+   * in-tab state, so edits typed after the failure are not lost.
+   */
+  const retryWrite = useCallback(
+    (noteId: string) => {
+      const failed = failedOpsRef.current.get(noteId);
+      if (!failed) return;
+      failedOpsRef.current.delete(noteId);
+      setFailedWrites((prev) => prev.filter((f) => f.noteId !== noteId));
+      if (failed.kind === 'delete') {
+        const target = failed.previous;
+        if (!target) return;
+        runWrite(noteId, 'delete', (repo) => repo.deleteNoteWithRevision(target), {
+          noteTitle: failed.noteTitle,
+          previous: target,
+        });
+        return;
+      }
+      const current = notesRef.current.find((n) => n.id === noteId);
+      if (!current) return; // note was deleted since; nothing left to save
+      if (failed.kind === 'create' || !failed.previous) {
+        runWrite(noteId, 'create', (repo) => repo.putNote(current), {
+          noteTitle: current.title,
+        });
+      } else {
+        const previous = failed.previous;
+        runWrite(
+          noteId,
+          'update',
+          (repo) => repo.saveNoteWithRevision(previous, current),
+          { noteTitle: current.title, previous }
+        );
+      }
+    },
+    [runWrite]
+  );
+
+  /**
+   * Gives up on a failed write and reconciles the optimistic state with what
+   * is actually durable: a failed create drops the note, a failed update
+   * reverts to the stored version, a failed delete brings the note back.
+   */
+  const discardFailedWrite = useCallback(async (noteId: string) => {
+    const failed = failedOpsRef.current.get(noteId);
+    failedOpsRef.current.delete(noteId);
+    setFailedWrites((prev) => prev.filter((f) => f.noteId !== noteId));
+    if (!failed) return;
+    try {
+      const repo = await getRepository();
+      const durable =
+        (await repo.getAllNotes()).find((n) => n.id === noteId) ?? null;
+      mutationCountRef.current += 1;
+      if (failed.kind === 'delete') {
+        if (durable) {
+          setNotes((prev) => sortByUpdated([...prev, durable]));
+        }
+      } else if (failed.kind === 'create' || !durable) {
+        setNotes((prev) => prev.filter((n) => n.id !== noteId));
+        setSelectedId((prev) => {
+          if (prev !== noteId) return prev;
+          const remaining = notesRef.current.filter((n) => n.id !== noteId);
+          return remaining.length > 0 ? remaining[0].id : null;
+        });
+      } else {
+        setNotes((prev) =>
+          sortByUpdated(prev.map((n) => (n.id === noteId ? durable : n)))
+        );
+      }
+    } catch (err) {
+      console.error('localnotes: failed to reconcile with storage', err);
+    }
+  }, []);
+
+  const createNote = useCallback(
+    (initialTitle?: string | unknown) => {
+      const now = Date.now();
+      const title = typeof initialTitle === 'string' ? initialTitle : '';
+      const note: Note = {
+        id: crypto.randomUUID(),
+        title,
+        content: '',
+        createdAt: now,
+        updatedAt: now,
+      };
+      mutationCountRef.current += 1;
+      setNotes((prev) => sortByUpdated([note, ...prev]));
+      setSelectedId(note.id);
+      runWrite(note.id, 'create', (repo) => repo.putNote(note), {
+        noteTitle: note.title,
+      });
+      return note;
+    },
+    [runWrite]
+  );
 
   const updateNote = useCallback(
     (id: string, fields: Partial<Pick<Note, 'title' | 'content'>>) => {
@@ -85,9 +231,12 @@ export function useNotes() {
       const next: Note = { ...previous, ...fields, updatedAt: Date.now() };
       mutationCountRef.current += 1;
       setNotes(sortByUpdated(notes.map((n) => (n.id === id ? next : n))));
-      persist((repo) => repo.saveNoteWithRevision(previous, next));
+      runWrite(id, 'update', (repo) => repo.saveNoteWithRevision(previous, next), {
+        noteTitle: next.title,
+        previous,
+      });
     },
-    [notes, persist]
+    [notes, runWrite]
   );
 
   const deleteNote = useCallback(
@@ -100,9 +249,12 @@ export function useNotes() {
       if (selectedId === id) {
         setSelectedId(updated.length > 0 ? updated[0].id : null);
       }
-      persist((repo) => repo.deleteNoteWithRevision(previous));
+      runWrite(id, 'delete', (repo) => repo.deleteNoteWithRevision(previous), {
+        noteTitle: previous.title,
+        previous,
+      });
     },
-    [notes, selectedId, persist]
+    [notes, selectedId, runWrite]
   );
 
   const selectNote = useCallback((id: string) => {
@@ -117,10 +269,14 @@ export function useNotes() {
     selectedNote,
     isLoading,
     loadError,
+    pendingWrites,
+    failedWrites,
     createNote,
     updateNote,
     deleteNote,
     selectNote,
     refreshNotes,
+    retryWrite,
+    discardFailedWrite,
   };
 }

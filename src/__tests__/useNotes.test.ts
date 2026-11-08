@@ -214,3 +214,247 @@ describe('useNotes', () => {
     expect(result.current.isLoading).toBe(false);
   });
 });
+
+describe('useNotes write failure recovery', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  it('tracks pending writes while a write is in flight', async () => {
+    const repo = await getRepository();
+    let resolveWrite!: () => void;
+    vi.spyOn(repo, 'putNote').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        })
+    );
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.createNote();
+    });
+    await waitFor(() => expect(result.current.pendingWrites).toBe(1));
+    await act(async () => {
+      resolveWrite();
+    });
+    await waitFor(() => expect(result.current.pendingWrites).toBe(0));
+    expect(result.current.failedWrites).toHaveLength(0);
+  });
+
+  it('reports a failed create and keeps it out of durable storage', async () => {
+    const repo = await getRepository();
+    const spy = vi
+      .spyOn(repo, 'putNote')
+      .mockRejectedValue(new Error('injected write failure'));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.createNote('Draft');
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    expect(result.current.failedWrites[0]).toMatchObject({
+      kind: 'create',
+      noteTitle: 'Draft',
+    });
+    expect(result.current.pendingWrites).toBe(0);
+    // Optimistic state shows the note; durable storage does not.
+    expect(result.current.notes).toHaveLength(1);
+    expect(await repo.getAllNotes()).toHaveLength(0);
+    spy.mockRestore();
+  });
+
+  it('retrying a failed create persists the latest in-tab state', async () => {
+    const repo = await getRepository();
+    const putSpy = vi
+      .spyOn(repo, 'putNote')
+      .mockRejectedValue(new Error('injected write failure'));
+    const saveSpy = vi
+      .spyOn(repo, 'saveNoteWithRevision')
+      .mockRejectedValue(new Error('injected write failure'));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.createNote('Draft');
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    const id = result.current.notes[0].id;
+
+    // The user keeps typing after the failure; retry must not lose it.
+    act(() => {
+      result.current.updateNote(id, { content: 'typed after failure' });
+    });
+    await waitFor(() =>
+      expect(result.current.failedWrites).toHaveLength(1)
+    );
+
+    putSpy.mockRestore();
+    saveSpy.mockRestore();
+    act(() => {
+      result.current.retryWrite(id);
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(0));
+    await repo.flushWrites();
+    const stored = await repo.getAllNotes();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].content).toBe('typed after failure');
+  });
+
+  it('discarding a failed create drops the note and fixes selection', async () => {
+    const repo = await getRepository();
+    const spy = vi
+      .spyOn(repo, 'putNote')
+      .mockRejectedValue(new Error('injected write failure'));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.createNote('Draft');
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    const id = result.current.notes[0].id;
+    spy.mockRestore();
+
+    await act(async () => {
+      await result.current.discardFailedWrite(id);
+    });
+    expect(result.current.notes).toHaveLength(0);
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.failedWrites).toHaveLength(0);
+  });
+
+  it('a failed update is not durable until retried', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote({ id: 'seed-1', title: 'Original' }));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const spy = vi
+      .spyOn(repo, 'saveNoteWithRevision')
+      .mockRejectedValue(new Error('injected write failure'));
+    act(() => {
+      result.current.updateNote('seed-1', { title: 'Edited' });
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    expect(result.current.failedWrites[0].kind).toBe('update');
+    // Optimistic UI shows the edit; durable storage still has the old title.
+    expect(result.current.notes[0].title).toBe('Edited');
+    expect((await repo.getAllNotes())[0].title).toBe('Original');
+
+    spy.mockRestore();
+    act(() => {
+      result.current.retryWrite('seed-1');
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(0));
+    await repo.flushWrites();
+    expect((await repo.getAllNotes())[0].title).toBe('Edited');
+  });
+
+  it('a failed update is not presented as durable after a reload', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote({ id: 'seed-1', title: 'Original' }));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const spy = vi
+      .spyOn(repo, 'saveNoteWithRevision')
+      .mockRejectedValue(new Error('injected write failure'));
+    act(() => {
+      result.current.updateNote('seed-1', { title: 'Edited' });
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    spy.mockRestore();
+
+    // Reload: a fresh hook over the same database must show the durable
+    // value, not the failed edit.
+    const { result: reloaded } = renderHook(() => useNotes());
+    await waitFor(() => expect(reloaded.current.isLoading).toBe(false));
+    expect(reloaded.current.notes[0].title).toBe('Original');
+
+    // Discard reverts the first hook's optimistic state to match.
+    await act(async () => {
+      await result.current.discardFailedWrite('seed-1');
+    });
+    expect(result.current.notes[0].title).toBe('Original');
+  });
+
+  it('a failed delete keeps the note durable; retry completes the delete', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote({ id: 'seed-1', title: 'Doomed' }));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const spy = vi
+      .spyOn(repo, 'deleteNoteWithRevision')
+      .mockRejectedValue(new Error('injected write failure'));
+    act(() => {
+      result.current.deleteNote('seed-1');
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    expect(result.current.failedWrites[0]).toMatchObject({
+      kind: 'delete',
+      noteTitle: 'Doomed',
+    });
+    // Optimistically gone from the UI, but still durable.
+    expect(result.current.notes).toHaveLength(0);
+    expect(await repo.getAllNotes()).toHaveLength(1);
+
+    spy.mockRestore();
+    act(() => {
+      result.current.retryWrite('seed-1');
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(0));
+    await repo.flushWrites();
+    expect(await repo.getAllNotes()).toHaveLength(0);
+  });
+
+  it('discarding a failed delete restores the note', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote({ id: 'seed-1', title: 'Keeper' }));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const spy = vi
+      .spyOn(repo, 'deleteNoteWithRevision')
+      .mockRejectedValue(new Error('injected write failure'));
+    act(() => {
+      result.current.deleteNote('seed-1');
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    spy.mockRestore();
+
+    await act(async () => {
+      await result.current.discardFailedWrite('seed-1');
+    });
+    expect(result.current.failedWrites).toHaveLength(0);
+    expect(result.current.notes).toHaveLength(1);
+    expect(result.current.notes[0].title).toBe('Keeper');
+  });
+
+  it('a later successful write heals an earlier failure record', async () => {
+    const repo = await getRepository();
+    const spy = vi
+      .spyOn(repo, 'putNote')
+      .mockRejectedValue(new Error('injected write failure'));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      result.current.createNote('Draft');
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    const id = result.current.notes[0].id;
+    spy.mockRestore();
+
+    // The next successful save makes the note durable, clearing the failure.
+    act(() => {
+      result.current.updateNote(id, { title: 'Healed' });
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(0));
+    await repo.flushWrites();
+    expect((await repo.getAllNotes())[0].title).toBe('Healed');
+  });
+});

@@ -171,6 +171,74 @@ describe('App integration', () => {
     expect(screen.getByRole('button', { name: 'Reload LocalNotes' })).toBeInTheDocument();
   });
 
+  it('surfaces an injected write failure and recovers on retry', async () => {
+    const user = userEvent.setup();
+    const repo = await getRepository();
+    render(<App />);
+    await screen.findByText(/no note selected/i);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const spy = vi
+      .spyOn(repo, 'putNote')
+      .mockRejectedValue(new Error('injected write failure'));
+
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/couldn’t save changes/i);
+    // The unsaved note is still listed, marked as not saved.
+    expect(
+      screen.getByRole('img', { name: /changes not saved/i })
+    ).toBeInTheDocument();
+    expect(await repo.getAllNotes()).toHaveLength(0);
+
+    spy.mockRestore();
+    await user.click(screen.getByRole('button', { name: /^retry$/i }));
+    await waitFor(() =>
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    );
+    await repo.flushWrites();
+    expect(await repo.getAllNotes()).toHaveLength(1);
+    expect(
+      screen.queryByRole('img', { name: /changes not saved/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it('discard reverts a failed edit to the durable version', async () => {
+    const user = userEvent.setup();
+    const repo = await getRepository();
+    await repo.putNote({
+      id: 'seed-1',
+      title: 'Original',
+      content: '',
+      createdAt: 1000,
+      updatedAt: 1000,
+    });
+    render(<App />);
+    // Open the seeded note in the editor.
+    await user.click(await screen.findByRole('option', { name: /original/i }));
+    const titleInput = screen.getByLabelText(/note title/i);
+    await waitFor(() => expect(titleInput).toHaveValue('Original'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const spy = vi
+      .spyOn(repo, 'saveNoteWithRevision')
+      .mockRejectedValue(new Error('injected write failure'));
+
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Edited');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/couldn’t save changes/i);
+    // Durable storage still holds the original.
+    expect((await repo.getAllNotes())[0].title).toBe('Original');
+
+    spy.mockRestore();
+    await user.click(screen.getByRole('button', { name: /discard changes/i }));
+    await waitFor(() =>
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/note title/i)).toHaveValue('Original')
+    );
+  });
+
   it('opens the command palette with Cmd+K and jumps to a note', async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -8,6 +8,9 @@ interface Props {
   selectedId: string | null;
   isGraphOpen?: boolean;
   dataStatus?: string | null;
+  isSaving?: boolean;
+  /** Notes whose latest write failed to persist. */
+  failedNoteIds?: ReadonlySet<string>;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onNewNote: () => void;
@@ -22,6 +25,8 @@ export function NoteList({
   selectedId,
   isGraphOpen = false,
   dataStatus,
+  isSaving = false,
+  failedNoteIds,
   onSelect,
   onDelete,
   onNewNote,
@@ -80,6 +85,7 @@ export function NoteList({
               key={note.id}
               note={note}
               isSelected={note.id === selectedId}
+              saveFailed={failedNoteIds?.has(note.id) ?? false}
               onSelect={onSelect}
               onDelete={onDelete}
             />
@@ -131,6 +137,11 @@ export function NoteList({
       {dataStatus && (
         <p className="note-list__data-status" role="status">
           {dataStatus}
+        </p>
+      )}
+      {isSaving && (
+        <p className="note-list__save-status" role="status">
+          Saving…
         </p>
       )}
     </aside>

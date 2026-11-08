@@ -37,6 +37,10 @@ inherit by default, vary by explicit delta).
   export/import. `localStorage` is read exactly once as a migration source
   and never written; keep its defensive invalid-data fallback, and keep note
   ordering and selection state in [`useNotes`](src/hooks/useNotes.ts).
+  `useNotes` applies mutations optimistically and must surface write failures
+  (per-note `failedWrites` with `retryWrite`/`discardFailedWrite` recovery)
+  instead of only logging them, so a failed write is never presented as
+  durable.
 - **Interface:** the app is a Vite, React, and TypeScript SPA using custom
   components and CSS. Preserve keyboard access and confirmation before note
   deletion; current behavior is exercised under [`src/__tests__/`](src/__tests__/).
