@@ -45,6 +45,10 @@ export interface NotesRepository {
   clearAgentAudit(): Promise<void>;
   /** Resolves once every queued write has been persisted. */
   flushWrites(): Promise<void>;
+  /** Awaits outstanding writes without consuming recorded failures. */
+  settleWrites(): Promise<void>;
+  /** Clears a note's recorded write failures after the caller recovered it. */
+  acknowledgeNoteWrites(noteId: string): void;
 }
 
 export interface ExportArchive {
@@ -200,25 +204,47 @@ function transactionToPromise(transaction: IDBTransaction): Promise<void> {
  * awaited via flushWrites() and never interleave transactions. Failures are
  * recorded (not swallowed): flush() drains the queue but rejects if any
  * write since the last flush failed, so an export can never present an
- * incomplete vault as a successful backup.
+ * incomplete vault as a successful backup. A failure tagged with a note id
+ * is cleared when a later write for that note succeeds, or when the caller
+ * acknowledges it after reconciling the note — a recovered write must not
+ * fail exports forever.
  */
 export function createWriteQueue() {
   let chain: Promise<unknown> = Promise.resolve();
-  const failures: unknown[] = [];
+  const failures: Array<{ error: unknown; tag?: string }> = [];
+  const clearTagged = (tag: string) => {
+    for (let i = failures.length - 1; i >= 0; i--) {
+      if (failures[i].tag === tag) failures.splice(i, 1);
+    }
+  };
   return {
-    enqueue<T>(op: () => Promise<T>): Promise<T> {
+    enqueue<T>(op: () => Promise<T>, tag?: string): Promise<T> {
       const next = chain.then(op, op);
-      next.catch((err) => failures.push(err));
+      next.catch((error) => failures.push({ error, tag }));
+      if (tag !== undefined) {
+        next.then(
+          () => clearTagged(tag),
+          () => undefined
+        );
+      }
       chain = next.then(
         () => undefined,
         () => undefined
       );
       return next;
     },
+    /** Clears a note's recorded failures after external recovery (discard). */
+    acknowledge(tag: string): void {
+      clearTagged(tag);
+    },
+    /** Awaits outstanding writes without consuming recorded failures. */
+    settled(): Promise<void> {
+      return chain.then(() => undefined);
+    },
     flush(): Promise<void> {
       return chain.then(() => {
         if (failures.length > 0) {
-          throw failures.shift();
+          throw failures.shift()!.error;
         }
       });
     },
@@ -353,13 +379,13 @@ async function openRepository(): Promise<NotesRepository> {
         await snapshotRevisionRaw(previous);
       }
       await putNotesRaw([next]);
-    });
+    }, next.id);
 
   const deleteNoteWithRevision = (note: Note): Promise<void> =>
     queue.enqueue(async () => {
       await snapshotRevisionRaw(note);
       await deleteNoteRaw(note.id);
-    });
+    }, note.id);
 
   return {
     async getAllNotes() {
@@ -369,13 +395,13 @@ async function openRepository(): Promise<NotesRepository> {
     },
 
     putNote(note: Note) {
-      return putNotes([note]);
+      return queue.enqueue(() => putNotesRaw([note]), note.id);
     },
 
     putNotes,
 
     deleteNote(id: string) {
-      return queue.enqueue(() => deleteNoteRaw(id));
+      return queue.enqueue(() => deleteNoteRaw(id), id);
     },
 
     saveNoteWithRevision,
@@ -525,6 +551,19 @@ async function openRepository(): Promise<NotesRepository> {
         );
       });
     },
+
+    settleWrites: () => {
+      // Same one-turn yield as flushWrites: fire-and-forget callers enqueue
+      // one microtask after the mutation call, so everything already
+      // requested must be in the chain before we await it.
+      return queue
+        .enqueue(async () => {
+          await Promise.resolve();
+        })
+        .then(() => queue.settled());
+    },
+
+    acknowledgeNoteWrites: (noteId: string) => queue.acknowledge(noteId),
 
     flushWrites: () => {
       // Fire-and-forget callers enqueue their write one microtask after the

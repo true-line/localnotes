@@ -158,6 +158,62 @@ describe('write queue', () => {
     // The failure is consumed by the flush that reported it
     await queue.flush();
   });
+
+  it('a successful tagged rewrite clears the earlier failure, per note', async () => {
+    const queue = createWriteQueue();
+    void queue.enqueue(async () => {
+      throw new Error('first failed');
+    }, 'note-1');
+    void queue.enqueue(async () => {
+      throw new Error('second failed');
+    }, 'note-2');
+    await queue.enqueue(async () => 'recovered', 'note-1');
+    // Only note-2's unrecovered failure remains.
+    await expect(queue.flush()).rejects.toThrow('second failed');
+  });
+
+  it('settled awaits writes without consuming failures; acknowledge clears them', async () => {
+    const queue = createWriteQueue();
+    let laterRan = false;
+    void queue.enqueue(async () => {
+      throw new Error('commit aborted');
+    }, 'note-1');
+    await queue.enqueue(async () => {
+      laterRan = true;
+    });
+    await queue.settled();
+    expect(laterRan).toBe(true);
+    await expect(queue.flush()).rejects.toThrow('commit aborted');
+
+    void queue.enqueue(async () => {
+      throw new Error('commit aborted again');
+    }, 'note-1');
+    await queue.settled();
+    queue.acknowledge('note-1');
+    await expect(queue.flush()).resolves.toBeUndefined();
+  });
+
+  it('a recovered note write no longer fails flushWrites at the repository level', async () => {
+    const repo = await getRepository();
+    // A function is not structured-cloneable, so the real IndexedDB write
+    // fails the way a quota/transaction failure would — inside the queue.
+    const poisoned = { ...makeNote('a'), bad: () => {} } as unknown as Note;
+    await expect(repo.putNote(poisoned)).rejects.toBeTruthy();
+    await repo.putNote(makeNote('a', { title: 'recovered' }));
+    await expect(repo.flushWrites()).resolves.toBeUndefined();
+    expect((await repo.getAllNotes())[0].title).toBe('recovered');
+  });
+
+  it('an unrecovered note write still fails flushWrites after other notes recover', async () => {
+    const repo = await getRepository();
+    const poisoned = { ...makeNote('a'), bad: () => {} } as unknown as Note;
+    await expect(repo.putNote(poisoned)).rejects.toBeTruthy();
+    await repo.putNote(makeNote('b'));
+    await expect(repo.flushWrites()).rejects.toBeTruthy();
+    // Discard-style recovery: acknowledging the reconciled note clears it.
+    repo.acknowledgeNoteWrites('a');
+    await expect(repo.flushWrites()).resolves.toBeUndefined();
+  });
 });
 
 describe('export/import', () => {

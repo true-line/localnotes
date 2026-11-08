@@ -170,14 +170,17 @@ export function useNotes() {
    * Gives up on a failed write and reconciles the optimistic state with what
    * is actually durable: a failed create drops the note, a failed update
    * reverts to the stored version, a failed delete brings the note back.
+   * Outstanding queued writes settle BEFORE the durable read, so a later
+   * queued save cannot silently commit after the reconciliation. The failure
+   * stays visible until reconciliation succeeds — a failed read must not
+   * present unreconciled state as resolved.
    */
   const discardFailedWrite = useCallback(async (noteId: string) => {
-    const failed = failedOpsRef.current.get(noteId);
-    failedOpsRef.current.delete(noteId);
-    setFailedWrites((prev) => prev.filter((f) => f.noteId !== noteId));
-    if (!failed) return;
     try {
       const repo = await getRepository();
+      await repo.settleWrites();
+      const failed = failedOpsRef.current.get(noteId);
+      if (!failed) return; // healed by a queued successful write meanwhile
       const durable =
         (await repo.getAllNotes()).find((n) => n.id === noteId) ?? null;
       mutationCountRef.current += 1;
@@ -196,6 +199,13 @@ export function useNotes() {
         setNotes((prev) =>
           sortByUpdated(prev.map((n) => (n.id === noteId ? durable : n)))
         );
+      }
+      // Only clear when the record is still the one we reconciled; a newer
+      // failure for the same note keeps its own banner and queue record.
+      if (failedOpsRef.current.get(noteId) === failed) {
+        failedOpsRef.current.delete(noteId);
+        setFailedWrites((prev) => prev.filter((f) => f.noteId !== noteId));
+        repo.acknowledgeNoteWrites(noteId);
       }
     } catch (err) {
       console.error('localnotes: failed to reconcile with storage', err);

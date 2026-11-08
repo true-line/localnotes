@@ -457,4 +457,75 @@ describe('useNotes write failure recovery', () => {
     await repo.flushWrites();
     expect((await repo.getAllNotes())[0].title).toBe('Healed');
   });
+
+  it('discard keeps the failure visible when reconciliation fails', async () => {
+    const repo = await getRepository();
+    const saveSpy = vi
+      .spyOn(repo, 'saveNoteWithRevision')
+      .mockRejectedValue(new Error('injected write failure'));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    act(() => {
+      result.current.createNote('Draft');
+    });
+    const id = result.current.notes[0].id;
+    await waitFor(() => expect(result.current.pendingWrites).toBe(0));
+
+    act(() => {
+      result.current.updateNote(id, { content: 'unsaved edit' });
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    saveSpy.mockRestore();
+
+    // Storage is still unavailable when the user chooses Discard: the banner
+    // must stay and the optimistic state must not be presented as reconciled.
+    const readSpy = vi
+      .spyOn(repo, 'getAllNotes')
+      .mockRejectedValue(new Error('read unavailable'));
+    await act(async () => {
+      await result.current.discardFailedWrite(id);
+    });
+    expect(result.current.failedWrites).toHaveLength(1);
+    expect(result.current.notes.find((n) => n.id === id)?.content).toBe(
+      'unsaved edit'
+    );
+    readSpy.mockRestore();
+  });
+
+  it('discard settles outstanding writes before reconciling', async () => {
+    const repo = await getRepository();
+    await repo.putNote(makeNote({ id: 'seed-1', title: 'Original', content: '' }));
+    const { result } = renderHook(() => useNotes());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await waitFor(() => expect(result.current.notes).toHaveLength(1));
+
+    const realSave = repo.saveNoteWithRevision;
+    const saveSpy = vi.spyOn(repo, 'saveNoteWithRevision');
+    saveSpy.mockRejectedValueOnce(new Error('injected write failure'));
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => (releaseSecond = resolve));
+    saveSpy.mockImplementationOnce(async (previous, next) => {
+      await secondGate;
+      return realSave(previous, next);
+    });
+
+    act(() => {
+      result.current.updateNote('seed-1', { content: 'first edit' });
+    });
+    await waitFor(() => expect(result.current.failedWrites).toHaveLength(1));
+    act(() => {
+      result.current.updateNote('seed-1', { content: 'second edit' });
+    });
+
+    // Discard while the later save is still queued: the reconciliation must
+    // not read a stale durable value that the queued save then overwrites.
+    await act(async () => {
+      const discard = result.current.discardFailedWrite('seed-1');
+      releaseSecond();
+      await discard;
+    });
+    expect(result.current.failedWrites).toHaveLength(0);
+    expect(result.current.notes[0].content).toBe('second edit');
+    expect((await repo.getAllNotes())[0].content).toBe('second edit');
+  });
 });
